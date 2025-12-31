@@ -1,6 +1,6 @@
-# kartbuddy
+# kartbuddy.app
 
-A new Flutter project.
+A Flutter application for KartBuddy.
 
 ## Getting Started
 
