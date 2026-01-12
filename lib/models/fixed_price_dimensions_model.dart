@@ -38,6 +38,7 @@ class FixedPriceDimension {
   final String chalaanReturnCharges;
   final String expressDeliveryPercentage;
   final String gstPercentage;
+  final String minimumOrderValue;
   final CodRange? codRange1;
   final String? codCharge1;
   final CodRange? codRange2;
@@ -70,6 +71,7 @@ class FixedPriceDimension {
     required this.chalaanReturnCharges,
     required this.expressDeliveryPercentage,
     required this.gstPercentage,
+    required this.minimumOrderValue,
     this.codRange1,
     this.codCharge1,
     this.codRange2,
@@ -104,6 +106,7 @@ class FixedPriceDimension {
       chalaanReturnCharges: json['chalaan_return_charges']?.toString() ?? '0',
       expressDeliveryPercentage: json['express_delivery_percentage']?.toString() ?? '0',
       gstPercentage: json['gst_percentage']?.toString() ?? '0',
+      minimumOrderValue: json['minimum_order_value']?.toString() ?? '0',
       codRange1: json['cod_range_1'] != null
           ? CodRange.fromJson(json['cod_range_1'] as Map<String, dynamic>)
           : null,

@@ -340,6 +340,7 @@ class Order {
   final bool express;
   final bool codCollection;
   final double codAmount;
+  final String? codStatus;
   final int totalUnits;
   final double totalGrossWeight;
   final String hub;
@@ -349,6 +350,9 @@ class Order {
   final String assignedAt;
   final String? pickedUpAt;
   final String? deliveredAt;
+  final List<String>? proofOfPickup;
+  final List<String>? proofOfDelivery;
+  final List<String>? podChallan;
 
   Order({
     required this.orderId,
@@ -366,6 +370,7 @@ class Order {
     required this.express,
     required this.codCollection,
     required this.codAmount,
+    this.codStatus,
     required this.totalUnits,
     required this.totalGrossWeight,
     required this.hub,
@@ -375,9 +380,40 @@ class Order {
     required this.assignedAt,
     this.pickedUpAt,
     this.deliveredAt,
+    this.proofOfPickup,
+    this.proofOfDelivery,
+    this.podChallan,
   });
 
   factory Order.fromJson(Map<String, dynamic> json) {
+    // Parse proof arrays and convert to full URLs
+    // Backend returns relative paths like "challans/file-123.png"
+    // We need to convert to "https://api.kartbuddy.in/challans/file-123.png"
+    List<String>? parseProofUrls(dynamic value) {
+      if (value == null) return null;
+      
+      const String baseUrl = 'https://api.kartbuddy.in/';
+      List<String> paths = [];
+      
+      if (value is List) {
+        paths = value.map((e) => e.toString()).toList();
+      } else if (value is String && value.isNotEmpty) {
+        paths = value.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+      }
+      
+      if (paths.isEmpty) return null;
+      
+      // Convert relative paths to full URLs
+      return paths.map((path) {
+        // If already a full URL, return as is
+        if (path.startsWith('http://') || path.startsWith('https://')) {
+          return path;
+        }
+        // Otherwise, prepend base URL
+        return baseUrl + path;
+      }).toList();
+    }
+
     return Order(
       orderId: json['order_id'] ?? '',
       pickupSequence: json['pickup_sequence'] ?? 0,
@@ -394,6 +430,7 @@ class Order {
       express: json['express'] ?? false,
       codCollection: json['cod_collection'] ?? false,
       codAmount: (json['cod_amount'] as num?)?.toDouble() ?? 0.0,
+      codStatus: json['cod_status'],
       totalUnits: json['total_units'] ?? 0,
       totalGrossWeight: (json['total_gross_weight'] as num?)?.toDouble() ?? 0.0,
       hub: json['hub'] ?? '',
@@ -403,6 +440,9 @@ class Order {
       assignedAt: json['assigned_at'] ?? '',
       pickedUpAt: json['picked_up_at'],
       deliveredAt: json['delivered_at'],
+      proofOfPickup: parseProofUrls(json['proof_of_pickup']),
+      proofOfDelivery: parseProofUrls(json['proof_of_delivery']),
+      podChallan: parseProofUrls(json['pod_challan']),
     );
   }
 }

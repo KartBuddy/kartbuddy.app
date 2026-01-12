@@ -42,7 +42,15 @@ class _DriverHomeState extends State<DriverHome> {
   
   // Trip data
   CurrentTrip? _currentTrip;
+  TripDetails? _tripDetails;
   bool _isLoadingTrip = false;
+  Set<String> _expandedOrders = {}; // Track which orders are expanded
+  Map<String, List<File>> _orderPopImages = {}; // Track POP images for each order
+  Map<String, bool> _orderPopUploading = {}; // Track upload state
+  Map<String, List<File>> _orderPodImages = {}; // Track POD images for each order
+  Map<String, bool> _orderPodUploading = {}; // Track POD upload state
+  Map<String, List<File>> _orderPodChallanImages = {}; // Track POD Challan images
+  Map<String, bool> _orderPodChallanUploading = {}; // Track POD Challan upload state
   final AuthService _authService = AuthService();
   
   // Trip history data
@@ -73,6 +81,9 @@ class _DriverHomeState extends State<DriverHome> {
   File? _startKmPic;
   final TextEditingController _plannedKmController = TextEditingController();
   final TextEditingController _startKmController = TextEditingController();
+  
+  // Periodic refresh timer
+  Timer? _refreshTimer;
   bool _isStartingTrip = false;
   
   // Hub location (Vasai) - approximate coordinates
@@ -97,6 +108,57 @@ class _DriverHomeState extends State<DriverHome> {
     _startLocationTracking();
     _loadCurrentTrip();
     _loadDriverProfileAndDcs();
+    _startPeriodicRefresh();
+  }
+  
+  void _startPeriodicRefresh() {
+    // Refresh trip data every 30 seconds
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      if (_isActive && mounted) {
+        print('🔄 Periodic refresh triggered');
+        _loadCurrentTrip();
+      }
+    });
+  }
+  
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _positionStreamSubscription?.cancel();
+    _mapController?.dispose();
+    _fullScreenMapController?.dispose();
+    _plannedKmController.dispose();
+    _startKmController.dispose();
+    _fromDateController.dispose();
+    _toDateController.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+  // @override
+  // void dispose() {
+  //   _positionStreamSubscription?.cancel();
+  //   _mapController?.dispose();
+  //   _fullScreenMapController?.dispose();
+  //   _fromDateController.dispose();
+  //   _toDateController.dispose();
+  //   _searchController.dispose();
+  //   _plannedKmController.dispose();
+  //   _startKmController.dispose();
+  //   super.dispose();
+  // }
+  
+  // Helper method to get initials from name
+  String _getInitials(String? fullName) {
+    if (fullName == null || fullName.isEmpty) return 'D';
+    
+    final parts = fullName.trim().split(' ');
+    if (parts.isEmpty) return 'D';
+    
+    if (parts.length == 1) {
+      return parts[0][0].toUpperCase();
+    }
+    
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }
   
   Future<void> _loadDriverProfileAndDcs() async {
@@ -279,22 +341,79 @@ class _DriverHomeState extends State<DriverHome> {
     try {
       final token = await UserService.getToken();
       if (token != null) {
+        // First, get the current assigned trip
         final response = await _authService.getCurrentTrip(token);
         if (response.success && response.data != null) {
+          // Check if trip is closed or completed
+          if (response.data!.tripStatus.toLowerCase() == 'trip closed' || 
+              response.data!.tripStatus.toLowerCase() == 'completed') {
+            print('⚠️ Trip is ${response.data!.tripStatus} - clearing current trip');
+            setState(() {
+              _currentTrip = null;
+              _tripDetails = null;
+            });
+            return;
+          }
+          
           setState(() {
             _currentTrip = response.data;
             _isActive = true; // Trip exists, so driver is active
           });
+          
+          print('✅ ===== CURRENT TRIP LOADED =====');
+          print('   Trip ID: ${_currentTrip?.tripId}');
+          print('   Trip Name: ${_currentTrip?.tripName}');
+          print('   Trip Status: "${_currentTrip?.tripStatus}"');
+          print('   Driver Response: "${_currentTrip?.driverResponse}"');
+          print('   Actual Start Time: ${_currentTrip?.actualStartTime}');
+          print('   Response Time: ${_currentTrip?.responseTime}');
+          print('===================================');
+          
+          // Then, fetch detailed trip information including orders
+          try {
+            final detailsResponse = await _authService.getTripDetails(
+              token,
+              response.data!.tripId, // Use trip_id (e.g., KBT13)
+            );
+            
+            if (detailsResponse.success && detailsResponse.data != null) {
+              // Double-check trip status in details
+              if (detailsResponse.data!.tripStatus.toLowerCase() == 'trip closed' || 
+                  detailsResponse.data!.tripStatus.toLowerCase() == 'completed') {
+                print('⚠️ Trip details show ${detailsResponse.data!.tripStatus} - clearing current trip');
+                setState(() {
+                  _currentTrip = null;
+                  _tripDetails = null;
+                });
+                return;
+              }
+              
+              setState(() {
+                _tripDetails = detailsResponse.data;
+              });
+              print('✅ Trip details loaded:');
+              print('   - Orders: ${_tripDetails?.orders.length}');
+              print('   - Driver Response: ${_tripDetails?.driverResponse}');
+              print('   - Actual Start Time: ${_tripDetails?.actualStartTime}');
+              print('   - Trip Status: ${_tripDetails?.tripStatus}');
+            }
+          } catch (e) {
+            print('⚠️ Error loading trip details: $e');
+            // Continue even if details fail - we have basic trip info
+          }
         } else {
+          print('ℹ️ No current trip found or response not successful');
           setState(() {
             _currentTrip = null;
+            _tripDetails = null;
           });
         }
       }
     } catch (e) {
-      print('Error loading current trip: $e');
+      print('❌ Error loading current trip: $e');
       setState(() {
         _currentTrip = null;
+        _tripDetails = null;
       });
     } finally {
       setState(() {
@@ -537,18 +656,7 @@ class _DriverHomeState extends State<DriverHome> {
     }
   }
   
-  @override
-  void dispose() {
-    _positionStreamSubscription?.cancel();
-    _mapController?.dispose();
-    _fullScreenMapController?.dispose();
-    _fromDateController.dispose();
-    _toDateController.dispose();
-    _searchController.dispose();
-    _plannedKmController.dispose();
-    _startKmController.dispose();
-    super.dispose();
-  }
+
   
   Future<void> _loadTripHistory() async {
     setState(() {
@@ -740,10 +848,10 @@ class _DriverHomeState extends State<DriverHome> {
                       color: Color(0xFF2196F3),
                       shape: BoxShape.circle,
                     ),
-                    child: const Center(
+                    child: Center(
                       child: Text(
-                        'R',
-                        style: TextStyle(
+                        _getInitials(_driverProfile?.fullName),
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -752,19 +860,19 @@ class _DriverHomeState extends State<DriverHome> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  const Column(
+                  Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Rajesh Singh',
-                        style: TextStyle(
+                        _driverProfile?.fullName ?? 'Driver',
+                        style: const TextStyle(
                           color: Color(0xFF1E3A8A),
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      Text(
+                      const Text(
                         'Driver',
                         style: TextStyle(
                           color: Colors.grey,
@@ -792,10 +900,10 @@ class _DriverHomeState extends State<DriverHome> {
                           color: Color(0xFF2196F3),
                           shape: BoxShape.circle,
                         ),
-                        child: const Center(
+                        child: Center(
                           child: Text(
-                            'R',
-                            style: TextStyle(
+                            _getInitials(_driverProfile?.fullName),
+                            style: const TextStyle(
                               color: Colors.white,
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
@@ -804,26 +912,30 @@ class _DriverHomeState extends State<DriverHome> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      const Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Rajesh Singh',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _driverProfile?.fullName ?? 'Driver',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                          ),
-                          SizedBox(height: 4),
-                          Text(
-                            'moneyformanish@gmail.com',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey,
+                            const SizedBox(height: 4),
+                            Text(
+                              _driverProfile?.email ?? _driverProfile?.mobileNumber ?? 'N/A',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -879,19 +991,23 @@ class _DriverHomeState extends State<DriverHome> {
                   ),
                 ),
               ],
-              onSelected: (String value) {
+              onSelected: (String value) async {
                 if (value == 'signout') {
                   _handleSignOut();
                 } else if (value == 'profile') {
-                  Navigator.push(
+                  await Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const DriverProfile()),
                   );
+                  // Refresh profile data when returning from profile page
+                  _loadDriverProfileAndDcs();
                 } else if (value == 'settings') {
-                  Navigator.push(
+                  await Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const DriverSettings()),
                   );
+                  // Refresh profile data when returning from settings page
+                  _loadDriverProfileAndDcs();
                 }
               },
             ),
@@ -1518,6 +1634,7 @@ class _DriverHomeState extends State<DriverHome> {
           setState(() {
             _isActive = false;
             _currentTrip = null; // Clear current trip when going inactive
+            _tripDetails = null; // Clear trip details
             _selectedVehicle = null; // Clear selected vehicle
           });
           
@@ -1550,6 +1667,7 @@ class _DriverHomeState extends State<DriverHome> {
           setState(() {
             _isActive = false;
             _currentTrip = null;
+            _tripDetails = null;
             _selectedVehicle = null;
           });
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1755,10 +1873,10 @@ class _DriverHomeState extends State<DriverHome> {
                     color: Color(0xFF2196F3),
                     shape: BoxShape.circle,
                   ),
-                  child: const Center(
+                  child: Center(
                     child: Text(
-                      'R',
-                      style: TextStyle(
+                      _getInitials(_driverProfile?.fullName),
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
@@ -1767,24 +1885,26 @@ class _DriverHomeState extends State<DriverHome> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                const Expanded(
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Rajesh Singh',
-                        style: TextStyle(
+                        _driverProfile?.fullName ?? 'Driver',
+                        style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
                           color: Color(0xFF1E3A8A),
                         ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                       Text(
-                        'KBD1',
-                        style: TextStyle(
+                        _driverProfile?.driverId ?? 'N/A',
+                        style: const TextStyle(
                           fontSize: 14,
                           color: Colors.grey,
                         ),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
@@ -2058,14 +2178,34 @@ class _DriverHomeState extends State<DriverHome> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Page Title
-          const Text(
-            'My Trips',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1E3A8A),
-            ),
+          // Page Title with Refresh Button
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'My Trips',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1E3A8A),
+                ),
+              ),
+              IconButton(
+                onPressed: _isLoadingTrip ? null : () {
+                  print('🔄 Manual refresh triggered');
+                  _loadCurrentTrip();
+                },
+                icon: _isLoadingTrip 
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh),
+                tooltip: 'Refresh Trip',
+                color: const Color(0xFF1E3A8A),
+              ),
+            ],
           ),
           const SizedBox(height: 24),
 
@@ -2124,92 +2264,175 @@ class _DriverHomeState extends State<DriverHome> {
                         ],
                       ),
                     ),
-                    // Show appropriate button based on trip status
-                    if (_currentTrip!.driverResponse.toLowerCase() == 'pending')
-                      ElevatedButton.icon(
-                        onPressed: _isLoadingTrip ? null : () {
-                          _handleAcceptTrip();
-                        },
-                        icon: const Icon(
-                          Icons.check_circle,
-                          size: 18,
-                        ),
-                        label: const Text(
-                          'Accept Trip',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
+                    // Show appropriate buttons based on trip status
+                    // Use _tripDetails if available for most up-to-date status
+                    Builder(
+                      builder: (context) {
+                        final driverResponse = (_tripDetails?.driverResponse ?? _currentTrip!.driverResponse).toLowerCase();
+                        final actualStartTime = _tripDetails?.actualStartTime ?? _currentTrip!.actualStartTime;
+                        final tripStatus = _tripDetails?.tripStatus ?? _currentTrip!.tripStatus;
+                        
+                        print('🎯 ===== BUTTON LOGIC DEBUG =====');
+                        print('   Current Trip ID: ${_currentTrip!.tripId}');
+                        print('   Trip Status: "$tripStatus"');
+                        print('   Driver Response (raw): "${_tripDetails?.driverResponse ?? _currentTrip!.driverResponse}"');
+                        print('   Driver Response (lowercase): "$driverResponse"');
+                        print('   Actual Start Time: "$actualStartTime"');
+                        print('   ');
+                        print('   BUTTON CHECKS:');
+                        print('   ✓ Is "pending"? ${driverResponse == 'pending'}');
+                        print('   ✓ Is "accepted"? ${driverResponse == 'accepted'}');
+                        print('   ✓ Trip status is "assigned"? ${tripStatus.toLowerCase() == 'assigned'}');
+                        print('   ✓ Start time is null? ${actualStartTime == null}');
+                        print('   ');
+                        print('   WHICH BUTTON SHOWS:');
+                        if (driverResponse == 'pending') {
+                          print('   → Accept/Reject buttons');
+                        } else if (driverResponse == 'accepted' && tripStatus.toLowerCase() == 'assigned') {
+                          print('   → Start Trip button (MATCHED!)');
+                        } else {
+                          print('   → End Trip button (FALLBACK)');
+                          print('   ⚠️ Why End Trip? driver_response="$driverResponse", trip_status="$tripStatus"');
+                        }
+                        print('🎯 ===============================');
+                        
+                        return const SizedBox.shrink();
+                      },
+                    ),
+                    if ((_tripDetails?.driverResponse ?? _currentTrip!.driverResponse).toLowerCase() == 'pending')
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          SizedBox(
+                            width: 140,
+                            child: ElevatedButton.icon(
+                              onPressed: _isLoadingTrip ? null : () {
+                                _handleAcceptTrip();
+                              },
+                              icon: const Icon(
+                                Icons.check_circle,
+                                size: 18,
+                              ),
+                              label: const Text(
+                                'Accept Trip',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 10,
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: 140,
+                            child: ElevatedButton.icon(
+                              onPressed: _isLoadingTrip ? null : () {
+                                _handleRejectTrip();
+                              },
+                              icon: const Icon(
+                                Icons.cancel,
+                                size: 18,
+                              ),
+                              label: const Text(
+                                'Reject Trip',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                            ),
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
+                        ],
                       )
-                    else if (_currentTrip!.driverResponse.toLowerCase() == 'accepted' && 
-                             _currentTrip!.actualStartTime == null)
-                      ElevatedButton.icon(
-                        onPressed: _isStartingTrip ? null : () {
-                          _showStartTripDialog();
-                        },
-                        icon: const Icon(
-                          Icons.play_arrow,
-                          size: 18,
-                        ),
-                        label: const Text(
-                          'Start Trip',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
+                    else if ((_tripDetails?.driverResponse ?? _currentTrip!.driverResponse).toLowerCase() == 'accepted' && 
+                             (_tripDetails?.tripStatus ?? _currentTrip!.tripStatus).toLowerCase() == 'assigned')
+                      SizedBox(
+                        width: 140,
+                        child: ElevatedButton.icon(
+                          onPressed: _isStartingTrip ? null : () {
+                            _showStartTripDialog();
+                          },
+                          icon: const Icon(
+                            Icons.play_arrow,
+                            size: 18,
                           ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blue,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 10,
+                          label: const Text(
+                            'Start Trip',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
                           ),
                         ),
                       )
                     else
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          _showEndTripDialog();
-                        },
-                        icon: const Icon(
-                          Icons.close,
-                          size: 18,
-                        ),
-                        label: const Text(
-                          'End Trip',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
+                      SizedBox(
+                        width: 140,
+                        child: ElevatedButton.icon(
+                          onPressed: _areAllOrdersComplete() ? () {
+                            _showEndTripDialog();
+                          } : null,
+                          icon: const Icon(
+                            Icons.close,
+                            size: 18,
+                          ),
+                          label: const Text(
+                            'End Trip',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: Colors.grey[300],
+                            disabledForegroundColor: Colors.grey[500],
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
                           ),
                         ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 10,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                      ),
+                      
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -2321,6 +2544,19 @@ class _DriverHomeState extends State<DriverHome> {
                         fontSize: 13,
                         color: Colors.blue[900],
                       ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                // Individual Order Cards (Expandable)
+                if (_tripDetails != null && _tripDetails!.orders.isNotEmpty) ...[
+                  ..._tripDetails!.orders.map((order) => _buildExpandableOrderCard(order)).toList(),
+                ] else if (_isLoadingTrip) ...[
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(20.0),
+                      child: CircularProgressIndicator(),
                     ),
                   ),
                 ],
@@ -2685,6 +2921,1801 @@ class _DriverHomeState extends State<DriverHome> {
     );
   }
 
+  Widget _buildExpandableOrderCard(Order order) {
+    final isExpanded = _expandedOrders.contains(order.orderId);
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.grey[300]!,
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Order Header (Always visible) - Clickable
+          InkWell(
+            onTap: () {
+              setState(() {
+                if (isExpanded) {
+                  _expandedOrders.remove(order.orderId);
+                } else {
+                  _expandedOrders.add(order.orderId);
+                }
+              });
+            },
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1E3A8A),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        order.orderId,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    if (order.express)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.orange[100],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.flash_on, size: 14, color: Colors.orange[800]),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Express',
+                              style: TextStyle(
+                                color: Colors.orange[800],
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: _getOrderStatusColor(order.orderStatusInTrip).withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: _getOrderStatusColor(order.orderStatusInTrip),
+                          width: 1,
+                        ),
+                      ),
+                      child: Text(
+                        _formatOrderStatus(order.orderStatusInTrip, order.orderStatus),
+                        style: TextStyle(
+                          color: _getOrderStatusColor(order.orderStatusInTrip),
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                      color: const Color(0xFF1E3A8A),
+                      size: 24,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // Expanded Details (using the beautiful card design)
+          if (isExpanded) ...[
+            const SizedBox(height: 16),
+
+            // Pickup Section (Green)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.green[200]!, width: 1),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: Colors.green,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: Text(
+                            'P',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Pickup #${order.pickupSequence}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF2E7D32),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    order.pickupAddress,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Colors.black87,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(Icons.phone, size: 14, color: Colors.green[700]),
+                      const SizedBox(width: 4),
+                      Text(
+                        order.pickupContact,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.green[700],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Delivery Section (Blue)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue[200]!, width: 1),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: Colors.blue,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: Text(
+                            'D',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Delivery #${order.deliverySequence}',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF1565C0),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    order.dropAddress,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Colors.black87,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(Icons.phone, size: 14, color: Colors.blue[700]),
+                      const SizedBox(width: 4),
+                      Text(
+                        order.dropContact,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.blue[700],
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Order Info Grid
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFAFAFA),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildOrderInfoColumn(
+                    Icons.inventory_2_outlined,
+                    'Units',
+                    '${order.totalUnits}',
+                    Colors.purple,
+                  ),
+                  Container(width: 1, height: 40, color: Colors.grey[300]),
+                  _buildOrderInfoColumn(
+                    Icons.scale_outlined,
+                    'Weight',
+                    '${order.totalGrossWeight} kg',
+                    Colors.teal,
+                  ),
+                  if (order.codCollection) ...[
+                    Container(width: 1, height: 40, color: Colors.grey[300]),
+                    _buildOrderInfoColumn(
+                      Icons.payments_outlined,
+                      'COD',
+                      '₹${order.codAmount.toStringAsFixed(0)}',
+                      Colors.amber[800]!,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            // Trip Order Notes
+            if (order.tripOrderNotes != null && order.tripOrderNotes!.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.amber[50],
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.amber[200]!, width: 1),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.note_alt_outlined, size: 16, color: Colors.amber[900]),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        order.tripOrderNotes!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.amber[900],
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            // Action Buttons Section
+            const SizedBox(height: 16),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Pickup Actions
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            'Pickup',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1E3A8A),
+                            ),
+                          ),
+                          if (_hasPopUploaded(order)) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.green,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Row(
+                                children: const [
+                                  Icon(Icons.check, size: 12, color: Colors.white),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'Uploaded',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          // Open navigation to pickup
+                        },
+                        icon: const Icon(Icons.navigation, size: 16),
+                        label: const Text('Open Navigation'),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          side: const BorderSide(color: Color(0xFF1E3A8A)),
+                          foregroundColor: const Color(0xFF1E3A8A),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ElevatedButton.icon(
+                        onPressed: _hasPopUploaded(order) ? null : (_orderPopUploading[order.orderId] == true ? null : () {
+                          _uploadPopImages(order);
+                        }),
+                        icon: _orderPopUploading[order.orderId] == true 
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : const Icon(Icons.upload, size: 16),
+                        label: Text(_hasPopUploaded(order) ? 'POP Uploaded' : 'POP'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _hasPopUploaded(order) ? Colors.grey : const Color(0xFF6366F1),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      ),
+                      // Display uploaded images (from local cache OR from backend)
+                      if ((_orderPopImages[order.orderId]?.isNotEmpty ?? false) || (order.proofOfPickup?.isNotEmpty ?? false)) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.green[50],
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.green[200]!, width: 1),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.check_circle, size: 14, color: Colors.green[700]),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${(order.proofOfPickup?.length ?? 0) + (_orderPopImages[order.orderId]?.length ?? 0)} image(s)',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.green[700],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 4,
+                                runSpacing: 4,
+                                children: [
+                                  // Images from backend
+                                  if (order.proofOfPickup != null)
+                                    ...order.proofOfPickup!.map((url) {
+                                      return ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.network(
+                                          url,
+                                          width: 50,
+                                          height: 50,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (context, error, stackTrace) {
+                                            return Container(
+                                              width: 50,
+                                              height: 50,
+                                              color: Colors.grey[300],
+                                              child: Icon(Icons.error, size: 20, color: Colors.grey[600]),
+                                            );
+                                          },
+                                        ),
+                                      );
+                                    }).toList(),
+                                  // Images from local cache (before upload completes)
+                                  if (_orderPopImages[order.orderId] != null)
+                                    ..._orderPopImages[order.orderId]!.map((file) {
+                                      return ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.file(
+                                          file,
+                                          width: 50,
+                                          height: 50,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      );
+                                    }).toList(),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                // Drop Actions (only enabled after POP is uploaded)
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          const Text(
+                            'Drop',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1E3A8A),
+                            ),
+                          ),
+                          if (!_hasPopUploaded(order)) ...[
+                            const SizedBox(width: 8),
+                            Tooltip(
+                              message: 'Upload POP first to enable drop actions',
+                              child: Icon(
+                                Icons.lock,
+                                size: 14,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed: _hasPopUploaded(order) ? () {
+                          // Open navigation to drop
+                        } : null,
+                        icon: const Icon(Icons.navigation, size: 16),
+                        label: const Text('Open Navigation'),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          side: BorderSide(
+                            color: _hasPopUploaded(order) ? const Color(0xFF1E3A8A) : Colors.grey[300]!,
+                          ),
+                          foregroundColor: _hasPopUploaded(order) ? const Color(0xFF1E3A8A) : Colors.grey[400],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ElevatedButton.icon(
+                        onPressed: !_hasPopUploaded(order) ? null : (_hasPodUploaded(order) ? null : (_orderPodUploading[order.orderId] == true ? null : () {
+                          _uploadPodImages(order);
+                        })),
+                        icon: _orderPodUploading[order.orderId] == true 
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : Icon(_hasPodUploaded(order) ? Icons.check : Icons.upload, size: 16),
+                        label: Text(_hasPodUploaded(order) ? 'POD Uploaded' : 'POD'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: !_hasPopUploaded(order) ? Colors.grey[300] : (_hasPodUploaded(order) ? Colors.grey : Colors.green),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          disabledBackgroundColor: Colors.grey[300],
+                          disabledForegroundColor: Colors.grey[500],
+                        ),
+                      ),
+                      // Display uploaded POD images (from local cache OR from backend)
+                      if ((_orderPodImages[order.orderId]?.isNotEmpty ?? false) || (order.proofOfDelivery?.isNotEmpty ?? false)) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.green[50],
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.green[200]!, width: 1),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.check_circle, size: 14, color: Colors.green[700]),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${(order.proofOfDelivery?.length ?? 0) + (_orderPodImages[order.orderId]?.length ?? 0)} image(s)',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.green[700],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 4,
+                                runSpacing: 4,
+                                children: [
+                                  // Images from backend
+                                  if (order.proofOfDelivery != null)
+                                    ...order.proofOfDelivery!.map((url) {
+                                      return ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.network(
+                                          url,
+                                          width: 50,
+                                          height: 50,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (context, error, stackTrace) {
+                                            return Container(
+                                              width: 50,
+                                              height: 50,
+                                              color: Colors.grey[300],
+                                              child: Icon(Icons.error, size: 20, color: Colors.grey[600]),
+                                            );
+                                          },
+                                        ),
+                                      );
+                                    }).toList(),
+                                  // Images from local cache (before upload completes)
+                                  if (_orderPodImages[order.orderId] != null)
+                                    ..._orderPodImages[order.orderId]!.map((file) {
+                                      return ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.file(
+                                          file,
+                                          width: 50,
+                                          height: 50,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      );
+                                    }).toList(),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      ElevatedButton.icon(
+                        onPressed: !_hasPopUploaded(order) ? null : (_hasPodChallanUploaded(order) ? null : (_orderPodChallanUploading[order.orderId] == true ? null : () {
+                          _uploadPodChallanImages(order);
+                        })),
+                        icon: _orderPodChallanUploading[order.orderId] == true 
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : Icon(_hasPodChallanUploaded(order) ? Icons.check : Icons.upload, size: 16),
+                        label: Text(_hasPodChallanUploaded(order) ? 'Challan Uploaded' : 'Upload POD Challan'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: !_hasPopUploaded(order) ? Colors.grey[300] : (_hasPodChallanUploaded(order) ? Colors.grey : Colors.orange),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          disabledBackgroundColor: Colors.grey[300],
+                          disabledForegroundColor: Colors.grey[500],
+                        ),
+                      ),
+                      // Display uploaded POD Challan images (from local cache OR from backend)
+                      if ((_orderPodChallanImages[order.orderId]?.isNotEmpty ?? false) || (order.podChallan?.isNotEmpty ?? false)) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.orange[50],
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.orange[200]!, width: 1),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.check_circle, size: 14, color: Colors.orange[700]),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${(order.podChallan?.length ?? 0) + (_orderPodChallanImages[order.orderId]?.length ?? 0)} image(s)',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.orange[700],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 4,
+                                runSpacing: 4,
+                                children: [
+                                  // Images from backend
+                                  if (order.podChallan != null)
+                                    ...order.podChallan!.map((url) {
+                                      return ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.network(
+                                          url,
+                                          width: 50,
+                                          height: 50,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (context, error, stackTrace) {
+                                            return Container(
+                                              width: 50,
+                                              height: 50,
+                                              color: Colors.grey[300],
+                                              child: Icon(Icons.error, size: 20, color: Colors.grey[600]),
+                                            );
+                                          },
+                                        ),
+                                      );
+                                    }).toList(),
+                                  // Images from local cache (before upload completes)
+                                  if (_orderPodChallanImages[order.orderId] != null)
+                                    ..._orderPodChallanImages[order.orderId]!.map((file) {
+                                      return ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.file(
+                                          file,
+                                          width: 50,
+                                          height: 50,
+                                          fit: BoxFit.cover,
+                                        ),
+                                      );
+                                    }).toList(),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (order.codCollection) ...[
+                        const SizedBox(height: 8),
+                        ElevatedButton.icon(
+                          onPressed: _hasPopUploaded(order) ? () {
+                            _collectCod(order);
+                          } : null,
+                          icon: const Icon(Icons.currency_rupee, size: 16),
+                          label: Text('Collect COD ₹${order.codAmount.toStringAsFixed(2)}'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _hasPopUploaded(order) ? Colors.blue : Colors.grey[300],
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            disabledBackgroundColor: Colors.grey[300],
+                            disabledForegroundColor: Colors.grey[500],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        ElevatedButton.icon(
+                          onPressed: _hasPopUploaded(order) ? () {
+                            _collectToPay(order);
+                          } : null,
+                          icon: const Icon(Icons.currency_rupee, size: 16),
+                          label: Text('Collect To-Pay ₹${(order.codAmount * 0.94).toStringAsFixed(2)}'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _hasPopUploaded(order) ? Colors.deepOrange : Colors.grey[300],
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            disabledBackgroundColor: Colors.grey[300],
+                            disabledForegroundColor: Colors.grey[500],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Color _getOrderStatusBgColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'assigned':
+        return Colors.blue[50]!;
+      case 'picked':
+      case 'picked_up':
+      case 'picked up':
+        return Colors.green[50]!;
+      case 'delivered':
+        return Colors.green[100]!;
+      case 'cancelled':
+        return Colors.red[50]!;
+      case 'pending':
+        return Colors.orange[50]!;
+      default:
+        return Colors.grey[100]!;
+    }
+  }
+
+  Widget _buildOrderDetailCard(Order order) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.grey[300]!,
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Order Header with ID and Status
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E3A8A),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      order.orderId,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  if (order.express)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.orange[100],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.flash_on, size: 14, color: Colors.orange[800]),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Express',
+                            style: TextStyle(
+                              color: Colors.orange[800],
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _getOrderStatusColor(order.orderStatusInTrip).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: _getOrderStatusColor(order.orderStatusInTrip),
+                    width: 1,
+                  ),
+                ),
+                child: Text(
+                  _formatOrderStatus(order.orderStatusInTrip, order.orderStatus),
+                  style: TextStyle(
+                    color: _getOrderStatusColor(order.orderStatusInTrip),
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Pickup Section
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.green[50],
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.green[200]!, width: 1),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: Colors.green,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Center(
+                        child: Text(
+                          'P',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Pickup #${order.pickupSequence}',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF2E7D32),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  order.pickupAddress,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Colors.black87,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(Icons.phone, size: 14, color: Colors.green[700]),
+                    const SizedBox(width: 4),
+                    Text(
+                      order.pickupContact,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.green[700],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Delivery Section
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.blue[200]!, width: 1),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: Colors.blue,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Center(
+                        child: Text(
+                          'D',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Delivery #${order.deliverySequence}',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1565C0),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  order.dropAddress,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Colors.black87,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(Icons.phone, size: 14, color: Colors.blue[700]),
+                    const SizedBox(width: 4),
+                    Text(
+                      order.dropContact,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.blue[700],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Order Info Grid
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFAFAFA),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildOrderInfoColumn(
+                  Icons.inventory_2_outlined,
+                  'Units',
+                  '${order.totalUnits}',
+                  Colors.purple,
+                ),
+                Container(width: 1, height: 40, color: Colors.grey[300]),
+                _buildOrderInfoColumn(
+                  Icons.scale_outlined,
+                  'Weight',
+                  '${order.totalGrossWeight} kg',
+                  Colors.teal,
+                ),
+                if (order.codCollection) ...[
+                  Container(width: 1, height: 40, color: Colors.grey[300]),
+                  _buildOrderInfoColumn(
+                    Icons.payments_outlined,
+                    'COD',
+                    '₹${order.codAmount.toStringAsFixed(0)}',
+                    Colors.amber[800]!,
+                  ),
+                ],
+              ],
+            ),
+          ),
+
+          // Trip Order Notes
+          if (order.tripOrderNotes != null && order.tripOrderNotes!.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.amber[50],
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.amber[200]!, width: 1),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.note_alt_outlined, size: 16, color: Colors.amber[900]),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      order.tripOrderNotes!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.amber[900],
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOrderInfoColumn(IconData icon, String label, String value, Color color) {
+    return Column(
+      children: [
+        Icon(icon, size: 20, color: color),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: Colors.grey[600],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _uploadPopImages(Order order) async {
+    // Show image source selection dialog
+    final source = await showDialog<ImageSource>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Select Image Source'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Color(0xFF6366F1)),
+              title: const Text('Camera'),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Color(0xFF6366F1)),
+              title: const Text('Gallery'),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
+    try {
+      setState(() {
+        _orderPopUploading[order.orderId] = true;
+      });
+
+      List<XFile> pickedFiles = [];
+      
+      if (source == ImageSource.camera) {
+        // Camera can only pick one image at a time
+        final XFile? image = await _imagePicker.pickImage(source: source);
+        if (image != null) {
+          pickedFiles.add(image);
+        }
+      } else {
+        // Gallery can pick multiple images
+        final List<XFile> images = await _imagePicker.pickMultiImage();
+        pickedFiles.addAll(images);
+      }
+
+      if (pickedFiles.isEmpty) {
+        setState(() {
+          _orderPopUploading[order.orderId] = false;
+        });
+        return;
+      }
+
+      // Convert XFile to File
+      List<File> imageFiles = pickedFiles.map((xfile) => File(xfile.path)).toList();
+
+      // Upload to server
+      final token = await UserService.getToken();
+      if (token == null) {
+        throw Exception('Not authenticated');
+      }
+
+      final response = await _authService.uploadOrderProofMultiple(
+        token,
+        order.orderId,
+        'proof_of_pickup',
+        imageFiles,
+      );
+
+      if (response['success'] == true) {
+        // Store locally for immediate display
+        setState(() {
+          if (_orderPopImages[order.orderId] == null) {
+            _orderPopImages[order.orderId] = [];
+          }
+          _orderPopImages[order.orderId]!.addAll(imageFiles);
+          _orderPopUploading[order.orderId] = false;
+        });
+
+        // Reload trip details to get updated data from backend
+        await _loadCurrentTrip();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${pickedFiles.length} image(s) uploaded successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        throw Exception(response['message'] ?? 'Upload failed');
+      }
+
+    } catch (e) {
+      print('Error uploading POP images: $e');
+      setState(() {
+        _orderPopUploading[order.orderId] = false;
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error uploading images: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  bool _hasPopUploaded(Order order) {
+    // Check if POP has been uploaded (from backend OR local cache)
+    return order.pickedUpAt != null || 
+           (order.proofOfPickup?.isNotEmpty ?? false) ||
+           (_orderPopImages[order.orderId]?.isNotEmpty ?? false);
+  }
+
+  bool _areAllOrdersComplete() {
+    // Check if all orders in the trip have completed all required uploads
+    if (_tripDetails == null || _tripDetails!.orders.isEmpty) return false;
+    
+    for (final order in _tripDetails!.orders) {
+      // Check if POP is uploaded
+      if (!_hasPopUploaded(order)) {
+        print('❌ Order ${order.orderId}: POP not uploaded');
+        return false;
+      }
+      
+      // Check if POD is uploaded
+      if (!_hasPodUploaded(order)) {
+        print('❌ Order ${order.orderId}: POD not uploaded');
+        return false;
+      }
+      
+      // Check if POD Challan is uploaded (if challan return is required)
+      // Note: We check if challanReturn field exists in order, if yes then check upload
+      // For now, we'll assume POD Challan is required for all orders
+      if (!_hasPodChallanUploaded(order)) {
+        print('❌ Order ${order.orderId}: POD Challan not uploaded');
+        return false;
+      }
+      
+      // Check if COD is collected (if COD collection is required)
+      if (order.codCollection && order.codAmount > 0) {
+        if (order.codStatus != 'collected') {
+          print('❌ Order ${order.orderId}: COD not collected');
+          return false;
+        }
+      }
+      
+      // Check if To-Pay is collected (if To-Pay is required)
+      // Assuming order has toPayAmount field
+      // For now, we'll skip this check as the API response doesn't show this field clearly
+    }
+    
+    print('✅ All orders complete!');
+    return true;
+  }
+
+  Future<void> _uploadPodImages(Order order) async {
+    // Show image source selection dialog
+    final source = await showDialog<ImageSource>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Select Image Source'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Colors.green),
+              title: const Text('Camera'),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Colors.green),
+              title: const Text('Gallery'),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
+    try {
+      setState(() {
+        _orderPodUploading[order.orderId] = true;
+      });
+
+      List<XFile> pickedFiles = [];
+      
+      if (source == ImageSource.camera) {
+        final XFile? image = await _imagePicker.pickImage(source: source);
+        if (image != null) {
+          pickedFiles.add(image);
+        }
+      } else {
+        final List<XFile> images = await _imagePicker.pickMultiImage();
+        pickedFiles.addAll(images);
+      }
+
+      if (pickedFiles.isEmpty) {
+        setState(() {
+          _orderPodUploading[order.orderId] = false;
+        });
+        return;
+      }
+
+      List<File> imageFiles = pickedFiles.map((xfile) => File(xfile.path)).toList();
+
+      // Upload to server
+      final token = await UserService.getToken();
+      if (token == null) {
+        throw Exception('Not authenticated');
+      }
+
+      final response = await _authService.uploadOrderProofMultiple(
+        token,
+        order.orderId,
+        'proof_of_delivery',
+        imageFiles,
+      );
+
+      if (response['success'] == true) {
+        // Store locally for immediate display
+        setState(() {
+          if (_orderPodImages[order.orderId] == null) {
+            _orderPodImages[order.orderId] = [];
+          }
+          _orderPodImages[order.orderId]!.addAll(imageFiles);
+          _orderPodUploading[order.orderId] = false;
+        });
+
+        // Reload trip details to get updated data from backend
+        await _loadCurrentTrip();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${pickedFiles.length} image(s) uploaded successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        throw Exception(response['message'] ?? 'Upload failed');
+      }
+
+    } catch (e) {
+      print('Error uploading POD images: $e');
+      setState(() {
+        _orderPodUploading[order.orderId] = false;
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error uploading images: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _uploadPodChallanImages(Order order) async {
+    // Show image source selection dialog
+    final source = await showDialog<ImageSource>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Select Image Source'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Colors.orange),
+              title: const Text('Camera'),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Colors.orange),
+              title: const Text('Gallery'),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
+    try {
+      setState(() {
+        _orderPodChallanUploading[order.orderId] = true;
+      });
+
+      List<XFile> pickedFiles = [];
+      
+      if (source == ImageSource.camera) {
+        final XFile? image = await _imagePicker.pickImage(source: source);
+        if (image != null) {
+          pickedFiles.add(image);
+        }
+      } else {
+        final List<XFile> images = await _imagePicker.pickMultiImage();
+        pickedFiles.addAll(images);
+      }
+
+      if (pickedFiles.isEmpty) {
+        setState(() {
+          _orderPodChallanUploading[order.orderId] = false;
+        });
+        return;
+      }
+
+      List<File> imageFiles = pickedFiles.map((xfile) => File(xfile.path)).toList();
+
+      // Upload to server
+      final token = await UserService.getToken();
+      if (token == null) {
+        throw Exception('Not authenticated');
+      }
+
+      final response = await _authService.uploadOrderProofMultiple(
+        token,
+        order.orderId,
+        'pod_challan',
+        imageFiles,
+      );
+
+      if (response['success'] == true) {
+        // Store locally for immediate display
+        setState(() {
+          if (_orderPodChallanImages[order.orderId] == null) {
+            _orderPodChallanImages[order.orderId] = [];
+          }
+          _orderPodChallanImages[order.orderId]!.addAll(imageFiles);
+          _orderPodChallanUploading[order.orderId] = false;
+        });
+
+        // Reload trip details to get updated data from backend
+        await _loadCurrentTrip();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${pickedFiles.length} image(s) uploaded successfully'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      } else {
+        throw Exception(response['message'] ?? 'Upload failed');
+      }
+
+    } catch (e) {
+      print('Error uploading POD Challan images: $e');
+      setState(() {
+        _orderPodChallanUploading[order.orderId] = false;
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error uploading images: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  bool _hasPodUploaded(Order order) {
+    return order.deliveredAt != null || 
+           (order.proofOfDelivery?.isNotEmpty ?? false) ||
+           (_orderPodImages[order.orderId]?.isNotEmpty ?? false);
+  }
+
+  bool _hasPodChallanUploaded(Order order) {
+    return (order.podChallan?.isNotEmpty ?? false) ||
+           (_orderPodChallanImages[order.orderId]?.isNotEmpty ?? false);
+  }
+
+  Future<void> _collectCod(Order order) async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Collect COD'),
+          content: Text(
+            'Confirm collection of ₹${order.codAmount.toStringAsFixed(2)} from customer?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Confirm'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final token = await UserService.getToken();
+      if (token == null) {
+        throw Exception('Not authenticated');
+      }
+
+      final response = await _authService.collectCod(
+        token,
+        order.orderId,
+        order.codAmount,
+      );
+
+      if (response['success'] == true) {
+        // Reload trip details
+        await _loadCurrentTrip();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('COD ₹${order.codAmount.toStringAsFixed(2)} collected successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        throw Exception(response['message'] ?? 'Failed to collect COD');
+      }
+    } catch (e) {
+      print('Error collecting COD: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _collectToPay(Order order) async {
+    String? selectedMethod;
+    File? paymentProof;
+    final toPayAmount = order.codAmount * 0.94; // 94% of COD amount
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Collect To-Pay'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Amount: ₹${toPayAmount.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1E3A8A),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Payment Method:',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: selectedMethod,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'cash', child: Text('Cash')),
+                        DropdownMenuItem(value: 'upi', child: Text('UPI')),
+                        DropdownMenuItem(value: 'card', child: Text('Card')),
+                        DropdownMenuItem(value: 'online', child: Text('Online')),
+                      ],
+                      onChanged: (value) {
+                        setDialogState(() {
+                          selectedMethod = value;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Payment Proof (Optional):',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final source = await showDialog<ImageSource>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Select Image Source'),
+                            content: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                ListTile(
+                                  leading: const Icon(Icons.camera_alt),
+                                  title: const Text('Camera'),
+                                  onTap: () => Navigator.pop(context, ImageSource.camera),
+                                ),
+                                ListTile(
+                                  leading: const Icon(Icons.photo_library),
+                                  title: const Text('Gallery'),
+                                  onTap: () => Navigator.pop(context, ImageSource.gallery),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+
+                        if (source != null) {
+                          final XFile? image = await _imagePicker.pickImage(source: source);
+                          if (image != null) {
+                            setDialogState(() {
+                              paymentProof = File(image.path);
+                            });
+                          }
+                        }
+                      },
+                      icon: const Icon(Icons.upload),
+                      label: Text(paymentProof != null ? 'Proof Selected' : 'Upload Proof'),
+                    ),
+                    if (paymentProof != null) ...[
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.file(
+                          paymentProof!,
+                          height: 100,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: selectedMethod == null
+                      ? null
+                      : () => Navigator.of(context).pop({
+                            'method': selectedMethod,
+                            'proof': paymentProof,
+                          }),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.deepOrange,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Collect'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result == null) return;
+
+    try {
+      final token = await UserService.getToken();
+      if (token == null) {
+        throw Exception('Not authenticated');
+      }
+
+      final response = await _authService.collectToPay(
+        token,
+        order.orderId,
+        toPayAmount,
+        result['method'],
+        result['proof'],
+      );
+
+      if (response['success'] == true) {
+        // Reload trip details
+        await _loadCurrentTrip();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('To-Pay ₹${toPayAmount.toStringAsFixed(2)} collected successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        throw Exception(response['message'] ?? 'Failed to collect To-Pay');
+      }
+    } catch (e) {
+      print('Error collecting To-Pay: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  String _formatOrderStatus(String statusInTrip, String orderStatus) {
+    // Priority: use order_status if available, otherwise use order_status_in_trip
+    final status = orderStatus.isNotEmpty ? orderStatus : statusInTrip;
+    
+    switch (status.toLowerCase()) {
+      case 'assigned':
+        return 'ASSIGNED';
+      case 'picked':
+      case 'picked_up':
+      case 'picked up':
+        return 'PICKED';
+      case 'delivered':
+        return 'DELIVERED';
+      case 'cancelled':
+        return 'CANCELLED';
+      case 'pending':
+        return 'PENDING';
+      case 'in_transit':
+      case 'in transit':
+        return 'IN TRANSIT';
+      default:
+        return status.toUpperCase();
+    }
+  }
+
+  Color _getOrderStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'assigned':
+        return Colors.blue;
+      case 'picked_up':
+      case 'picked up':
+      case 'picked':
+        return Colors.green;
+      case 'delivered':
+        return Colors.green;
+      case 'cancelled':
+        return Colors.red;
+      case 'pending':
+        return Colors.orange;
+      default:
+        return Colors.grey;
+    }
+  }
+  // Color _getOrderStatusColor(String status) {
+  //   switch (status.toLowerCase()) {
+  //     case 'pending':
+  //       return Colors.orange;
+  //     case 'picked':
+  //       return Colors.blue;
+  //     case 'delivered':
+  //       return Colors.green;
+  //     case 'cancelled':
+  //       return Colors.red;
+  //     default:
+  //       return Colors.grey;
+  //   }
+  // }
+
   Future<void> _handleAcceptTrip() async {
     if (_currentTrip == null) {
       return;
@@ -2703,15 +4734,66 @@ class _DriverHomeState extends State<DriverHome> {
         );
         
         if (response['success'] == true) {
-          // Reload the current trip to get updated status
+          print('✅ Trip accepted successfully');
+          print('   Response data: ${response['data']}');
+          print('   Trip ID from response: ${response['data']?['trip_id']}');
+          print('   Message: ${response['data']?['message']}');
+          
+          // Immediately update local state to "accepted" since API confirmed success
+          if (_currentTrip != null) {
+            // Create a temporary updated trip object to trigger UI update
+            setState(() {
+              // Force the UI to recognize trip as accepted
+              // This ensures button shows immediately
+            });
+          }
+          
+          // Show success message
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(response['data']?['message'] ?? response['message'] ?? 'Trip accepted successfully. You can now start the trip.'),
+                backgroundColor: Colors.green,
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
+          
+          // Reload trip data to sync with backend
+          print('🔄 Reloading trip data after accept...');
+          await Future.delayed(const Duration(milliseconds: 500));
           await _loadCurrentTrip();
           
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(response['data']?['message'] ?? response['message'] ?? 'Trip accepted successfully'),
-              backgroundColor: Colors.green,
-            ),
-          );
+          print('🔍 After reload - Current Trip:');
+          print('   - ID: ${_currentTrip?.id}');
+          print('   - Trip ID: ${_currentTrip?.tripId}');
+          print('   - Driver Response: "${_currentTrip?.driverResponse}"');
+          print('   - Trip Status: "${_currentTrip?.tripStatus}"');
+          print('   - Actual Start Time: ${_currentTrip?.actualStartTime}');
+          
+          print('🔍 After reload - Trip Details:');
+          print('   - Driver Response: "${_tripDetails?.driverResponse}"');
+          print('   - Trip Status: "${_tripDetails?.tripStatus}"');
+          print('   - Actual Start Time: ${_tripDetails?.actualStartTime}');
+          
+          // Check button condition
+          final driverResp = (_tripDetails?.driverResponse ?? _currentTrip?.driverResponse ?? '').toLowerCase();
+          final startTime = _tripDetails?.actualStartTime ?? _currentTrip?.actualStartTime;
+          print('🎯 Button Condition Check:');
+          print('   - Driver Response (lowercase): "$driverResp"');
+          print('   - Is "accepted"? ${driverResp == 'accepted'}');
+          print('   - Start Time is null? ${startTime == null}');
+          print('   - Should show Start Trip button? ${driverResp == 'accepted' && startTime == null}');
+          
+          // If still not updated, try once more
+          if (driverResp != 'accepted') {
+            print('⚠️ Driver response is "$driverResp", not "accepted". Retrying...');
+            await Future.delayed(const Duration(seconds: 1));
+            await _loadCurrentTrip();
+            
+            final retryResp = (_tripDetails?.driverResponse ?? _currentTrip?.driverResponse ?? '').toLowerCase();
+            print('🔍 After retry - Driver Response: "$retryResp"');
+          }
         } else {
           throw Exception(response['message'] ?? 'Failed to accept trip');
         }
@@ -2732,9 +4814,98 @@ class _DriverHomeState extends State<DriverHome> {
       });
     }
   }
+
+  Future<void> _handleRejectTrip() async {
+    if (_currentTrip == null) {
+      return;
+    }
+    
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Reject Trip'),
+          content: const Text(
+            'Are you sure you want to reject this trip? This action cannot be undone.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Reject'),
+            ),
+          ],
+        );
+      },
+    );
+    
+    if (confirmed != true) {
+      return;
+    }
+    
+    setState(() {
+      _isLoadingTrip = true;
+    });
+    
+    try {
+      final token = await UserService.getToken();
+      if (token != null) {
+        final response = await _authService.rejectTrip(
+          token,
+          _currentTrip!.id,
+        );
+        
+        if (response['success'] == true) {
+          // Reload the current trip to get updated status
+          await _loadCurrentTrip();
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response['data']?['message'] ?? response['message'] ?? 'Trip rejected successfully'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        } else {
+          throw Exception(response['message'] ?? 'Failed to reject trip');
+        }
+      }
+    } catch (e) {
+      print('Error rejecting trip: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() {
+        _isLoadingTrip = false;
+      });
+    }
+  }
   
   void _showStartTripDialog() {
-    _plannedKmController.clear();
+    // Pre-fill Planned KM from trip details (formatted to 2 decimal places)
+    if (_tripDetails?.kmByGoogle != null && _tripDetails!.kmByGoogle!.isNotEmpty) {
+      final kmValue = double.tryParse(_tripDetails!.kmByGoogle!) ?? 0.0;
+      _plannedKmController.text = kmValue.toStringAsFixed(2);
+    } else if (_tripDetails?.plannedKm != null && _tripDetails!.plannedKm!.isNotEmpty) {
+      final kmValue = double.tryParse(_tripDetails!.plannedKm!) ?? 0.0;
+      _plannedKmController.text = kmValue.toStringAsFixed(2);
+    } else {
+      _plannedKmController.clear();
+    }
+    
     _startKmController.clear();
     _startKmPic = null;
     
@@ -2758,6 +4929,7 @@ class _DriverHomeState extends State<DriverHome> {
                         border: OutlineInputBorder(),
                       ),
                       keyboardType: TextInputType.number,
+                      readOnly: true, // Make it read-only since it's auto-filled
                     ),
                     const SizedBox(height: 16),
                     TextField(
@@ -2771,74 +4943,53 @@ class _DriverHomeState extends State<DriverHome> {
                     ),
                     const SizedBox(height: 16),
                     const Text(
-                      'Start KM Photo',
+                      'Start KM Photo (capture only)',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 8),
-                    GestureDetector(
-                      onTap: () async {
-                        final ImageSource? source = await showDialog<ImageSource>(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Select Image Source'),
-                            content: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                ListTile(
-                                  leading: const Icon(Icons.camera_alt),
-                                  title: const Text('Camera'),
-                                  onTap: () => Navigator.pop(context, ImageSource.camera),
-                                ),
-                                ListTile(
-                                  leading: const Icon(Icons.photo_library),
-                                  title: const Text('Gallery'),
-                                  onTap: () => Navigator.pop(context, ImageSource.gallery),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                        
-                        if (source != null) {
-                          final XFile? image = await _imagePicker.pickImage(
-                            source: source,
-                            imageQuality: 85,
-                          );
-                          
-                          if (image != null) {
-                            setDialogState(() {
-                              _startKmPic = File(image.path);
-                            });
-                          }
-                        }
-                      },
-                      child: Container(
+                    if (_startKmPic != null) ...[
+                      Container(
                         width: double.infinity,
                         height: 150,
                         decoration: BoxDecoration(
-                          color: Colors.grey[200],
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(color: Colors.grey[300]!),
                         ),
-                        child: _startKmPic != null
-                            ? Image.file(
-                                _startKmPic!,
-                                fit: BoxFit.cover,
-                              )
-                            : const Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.camera_alt, size: 48, color: Colors.grey),
-                                  SizedBox(height: 8),
-                                  Text(
-                                    'Tap to add photo',
-                                    style: TextStyle(color: Colors.grey),
-                                  ),
-                                ],
-                              ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.file(
+                            _startKmPic!,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        final XFile? image = await _imagePicker.pickImage(
+                          source: ImageSource.camera,
+                          imageQuality: 85,
+                        );
+                        
+                        if (image != null) {
+                          setDialogState(() {
+                            _startKmPic = File(image.path);
+                          });
+                        }
+                      },
+                      icon: const Icon(Icons.camera_alt),
+                      label: Text(_startKmPic != null ? 'Retake Photo' : 'Open Camera'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
                       ),
                     ),
                   ],
@@ -2961,37 +5112,203 @@ class _DriverHomeState extends State<DriverHome> {
   }
 
   void _showEndTripDialog() {
+    final TextEditingController endKmController = TextEditingController();
+    File? endKmPic;
+    bool isLoading = false;
+
     showDialog(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('End Trip'),
-          content: const Text(
-            'Are you sure you want to end this trip? This action cannot be undone.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Trip ended successfully'),
-                  ),
-                );
-                // Handle end trip logic here
-              },
-              child: const Text(
-                'End Trip',
-                style: TextStyle(color: Colors.red),
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('End Trip'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Please provide the ending odometer reading to complete this trip.',
+                      style: TextStyle(fontSize: 14),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: endKmController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'End KM *',
+                        hintText: 'Enter ending odometer reading',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.speed),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Upload Odometer Photo *',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 8),
+                    if (endKmPic != null) ...[
+                      Stack(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.file(
+                              endKmPic!,
+                              width: double.infinity,
+                              height: 150,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: CircleAvatar(
+                              backgroundColor: Colors.red,
+                              radius: 16,
+                              child: IconButton(
+                                padding: EdgeInsets.zero,
+                                icon: const Icon(Icons.close, size: 16, color: Colors.white),
+                                onPressed: () {
+                                  setState(() {
+                                    endKmPic = null;
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              final ImagePicker picker = ImagePicker();
+                              final XFile? image = await picker.pickImage(source: ImageSource.camera);
+                              if (image != null) {
+                                setState(() {
+                                  endKmPic = File(image.path);
+                                });
+                              }
+                            },
+                            icon: const Icon(Icons.camera_alt),
+                            label: const Text('Camera'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              final ImagePicker picker = ImagePicker();
+                              final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+                              if (image != null) {
+                                setState(() {
+                                  endKmPic = File(image.path);
+                                });
+                              }
+                            },
+                            icon: const Icon(Icons.photo_library),
+                            label: const Text('Gallery'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+              actions: [
+                TextButton(
+                  onPressed: isLoading ? null : () {
+                    Navigator.of(context).pop();
+                  },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isLoading ? null : () async {
+                    // Validate inputs
+                    if (endKmController.text.trim().isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Please enter end KM')),
+                      );
+                      return;
+                    }
+                    
+                    if (endKmPic == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Please upload odometer photo')),
+                      );
+                      return;
+                    }
+
+                    setState(() {
+                      isLoading = true;
+                    });
+
+                    try {
+                      final token = await UserService.getToken();
+                      if (token == null) {
+                        throw Exception('Not authenticated');
+                      }
+
+                      final tripId = _tripDetails?.id ?? _currentTrip!.id;
+
+                      await _authService.endTrip(
+                        token,
+                        tripId,
+                        endKmController.text.trim(),
+                        endKmPic,
+                      );
+
+                      if (!mounted) return;
+                      
+                      Navigator.of(context).pop();
+                      
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Trip ended successfully!'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+
+                      // Reload current trip
+                      await _loadCurrentTrip();
+                    } catch (e) {
+                      if (!mounted) return;
+                      
+                      setState(() {
+                        isLoading = false;
+                      });
+                      
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Failed to end trip: ${e.toString()}'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : const Text('End Trip'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -3847,20 +6164,7 @@ class _DriverHomeState extends State<DriverHome> {
     );
   }
   
-  Color _getOrderStatusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'pending':
-        return Colors.orange;
-      case 'picked':
-        return Colors.blue;
-      case 'delivered':
-        return Colors.green;
-      case 'cancelled':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
-  }
+
   
   Widget _buildDetailRow(String label, String value) {
     return Padding(

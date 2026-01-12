@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'customer_home.dart';
 import 'customer_wallet.dart';
+//go for the page that appears after the user clicks on the book partload button make him understand the difference fixed price and the dynamic price and also about the prepaid and to pay 
 import 'place_order.dart';
 import 'my_orders.dart';
 import 'track_order.dart';
@@ -280,7 +281,7 @@ class _PlaceManagerState extends State<PlaceManager> {
     }
 
     try {
-      final apiKey = 'AIzaSyCDhyFI5zyW3KR-ESWfvUS__44LMUPU25c';
+      final apiKey = 'AIzaSyB1tKNFxigZ5II4PqyHAXQSCgwOL2zsiwg';
       final encodedQuery = Uri.encodeComponent(query);
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$encodedQuery&key=$apiKey&components=country:in',
@@ -4556,7 +4557,7 @@ class _PlaceManagerState extends State<PlaceManager> {
                               placeSource: customer.id,
                               placeSourceName: customer.fullName,
                               state: editStateController.text.trim(),
-                              status: 'Under Review',
+                              status: 'Approved',
                             );
 
                             print('🔵 Updating place: ${place.placeId}');
@@ -4764,7 +4765,7 @@ class _PlaceManagerState extends State<PlaceManager> {
         placeSourceName: customer.fullName,
         placeType: 'Pickup Place',
         state: _stateController.text.trim(),
-        status: 'Under Review',
+        status: 'Approved',
       );
 
       print('🔵 Submitting pickup address...');
@@ -4873,7 +4874,7 @@ class _PlaceManagerState extends State<PlaceManager> {
         placeSourceName: customer.fullName,
         placeType: 'Consignee Place',
         state: _consigneeStateController.text.trim(),
-        status: 'Under Review',
+        status: 'Approved',
       );
 
       print('🔵 Submitting consignee address...');
@@ -6019,7 +6020,7 @@ class _PlaceManagerState extends State<PlaceManager> {
     }
 
     try {
-      final apiKey = 'AIzaSyCDhyFI5zyW3KR-ESWfvUS__44LMUPU25c';
+      final apiKey = 'AIzaSyB1tKNFxigZ5II4PqyHAXQSCgwOL2zsiwg';
       final encodedQuery = Uri.encodeComponent(query);
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$encodedQuery&key=$apiKey&components=country:in',
@@ -6059,7 +6060,7 @@ class _PlaceManagerState extends State<PlaceManager> {
 
     try {
       // Use Google Geocoding API to search for the location
-      final apiKey = 'AIzaSyCDhyFI5zyW3KR-ESWfvUS__44LMUPU25c';
+      final apiKey = 'AIzaSyB1tKNFxigZ5II4PqyHAXQSCgwOL2zsiwg';
       final encodedQuery = Uri.encodeComponent(query);
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/geocode/json?address=$encodedQuery&key=$apiKey',
@@ -6148,7 +6149,7 @@ class _PlaceManagerState extends State<PlaceManager> {
     }
 
     try {
-      final apiKey = 'AIzaSyCDhyFI5zyW3KR-ESWfvUS__44LMUPU25c';
+      final apiKey = 'AIzaSyB1tKNFxigZ5II4PqyHAXQSCgwOL2zsiwg';
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$apiKey&fields=geometry,formatted_address',
       );
@@ -6240,7 +6241,7 @@ class _PlaceManagerState extends State<PlaceManager> {
               }
 
               try {
-                final apiKey = 'AIzaSyCDhyFI5zyW3KR-ESWfvUS__44LMUPU25c';
+                final apiKey = 'AIzaSyB1tKNFxigZ5II4PqyHAXQSCgwOL2zsiwg';
                 final encodedQuery = Uri.encodeComponent(query);
                 final url = Uri.parse(
                   'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$encodedQuery&key=$apiKey&components=country:in',
@@ -6282,7 +6283,7 @@ class _PlaceManagerState extends State<PlaceManager> {
               if (query.trim().isEmpty) return;
 
               try {
-                final apiKey = 'AIzaSyCDhyFI5zyW3KR-ESWfvUS__44LMUPU25c';
+                final apiKey = 'AIzaSyB1tKNFxigZ5II4PqyHAXQSCgwOL2zsiwg';
                 final encodedQuery = Uri.encodeComponent(query);
                 final url = Uri.parse(
                   'https://maps.googleapis.com/maps/api/geocode/json?address=$encodedQuery&key=$apiKey',
@@ -6313,7 +6314,7 @@ class _PlaceManagerState extends State<PlaceManager> {
             // Function to get place details from place_id
             Future<void> getPlaceDetailsAndMove(String placeId) async {
               try {
-                final apiKey = 'AIzaSyCDhyFI5zyW3KR-ESWfvUS__44LMUPU25c';
+                final apiKey = 'AIzaSyB1tKNFxigZ5II4PqyHAXQSCgwOL2zsiwg';
                 final url = Uri.parse(
                   'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$apiKey',
                 );
@@ -6686,7 +6687,7 @@ class _PlaceManagerState extends State<PlaceManager> {
 
     try {
       // Use Google Geocoding API to search for the location
-      final apiKey = 'AIzaSyCDhyFI5zyW3KR-ESWfvUS__44LMUPU25c';
+      final apiKey = 'AIzaSyB1tKNFxigZ5II4PqyHAXQSCgwOL2zsiwg';
       final encodedQuery = Uri.encodeComponent(query);
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/geocode/json?address=$encodedQuery&key=$apiKey',
@@ -6830,7 +6831,7 @@ class _PlaceManagerState extends State<PlaceManager> {
     }
 
     try {
-      final apiKey = 'AIzaSyCDhyFI5zyW3KR-ESWfvUS__44LMUPU25c';
+      final apiKey = 'AIzaSyB1tKNFxigZ5II4PqyHAXQSCgwOL2zsiwg';
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$apiKey&fields=geometry,formatted_address',
       );

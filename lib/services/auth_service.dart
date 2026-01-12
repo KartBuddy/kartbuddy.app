@@ -28,6 +28,7 @@ import '../models/dynamic_price_model.dart';
 import '../models/trip_model.dart';
 import '../models/dc_model.dart';
 import '../models/vehicle_model.dart';
+import '../models/order_tracking_model.dart';
 
 class AuthService {
   static const String baseUrl = 'https://api.kartbuddy.in/api';
@@ -1779,6 +1780,53 @@ class AuthService {
     }
   }
 
+  Future<DriverLoginResponse> driverRegister({
+    required String firstName,
+    required String lastName,
+    required String email,
+    required String mobileNumber,
+    required String password,
+  }) async {
+    try {
+      final url = Uri.parse('$baseUrl/auth/driver/register');
+      
+      final requestBody = {
+        'first_name': firstName,
+        'last_name': lastName,
+        'email': email,
+        'mobile_number': mobileNumber,
+        'password': password,
+      };
+      
+      print('🔵 API Call: POST $url');
+      print('🔵 Request Body: ${jsonEncode(requestBody)}');
+      
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(requestBody),
+      );
+
+      print('🔵 Response Status Code: ${response.statusCode}');
+      print('🔵 Response Body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final jsonResponse = jsonDecode(response.body);
+        print('✅ Driver registration successful');
+        return DriverLoginResponse.fromJson(jsonResponse);
+      } else {
+        final errorResponse = jsonDecode(response.body);
+        print('❌ Driver registration failed: ${errorResponse['message'] ?? 'Unknown error'}');
+        throw Exception(errorResponse['message'] ?? 'Registration failed');
+      }
+    } catch (e) {
+      print('❌ Network error: ${e.toString()}');
+      throw Exception('Network error: ${e.toString()}');
+    }
+  }
+
   Future<DriverLoginResponse> driverLogin(String emailOrPhone, String password, {required bool isPhone}) async {
     try {
       final url = Uri.parse('$baseUrl/auth/driver/login');
@@ -1878,6 +1926,13 @@ class AuthService {
       if (response.statusCode == 200 || response.statusCode == 304) {
         final jsonResponse = jsonDecode(response.body);
         print('✅ Current trip retrieved successfully');
+        print('   📋 Response data:');
+        if (jsonResponse['data'] != null) {
+          print('      - driver_response: "${jsonResponse['data']['driver_response']}"');
+          print('      - trip_status: "${jsonResponse['data']['trip_status']}"');
+          print('      - actual_start_time: ${jsonResponse['data']['actual_start_time']}');
+          print('      - trip_id: "${jsonResponse['data']['trip_id']}"');
+        }
         return CurrentTripResponse.fromJson(jsonResponse);
       } else {
         final errorResponse = jsonDecode(response.body);
@@ -2123,6 +2178,42 @@ class AuthService {
     }
   }
 
+  Future<Map<String, dynamic>> rejectTrip(
+    String token,
+    String tripId,
+  ) async {
+    try {
+      final url = Uri.parse('$baseUrl/trip-manager/$tripId/reject');
+      
+      print('🔵 API Call: POST $url');
+      print('🔵 Authorization: Bearer ${token.substring(0, 20)}...');
+      
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      print('🔵 Response Status Code: ${response.statusCode}');
+      print('🔵 Response Body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final jsonResponse = jsonDecode(response.body);
+        print('✅ Trip rejected successfully');
+        return jsonResponse as Map<String, dynamic>;
+      } else {
+        final errorResponse = jsonDecode(response.body);
+        print('❌ Failed to reject trip: ${errorResponse['message'] ?? 'Unknown error'}');
+        throw Exception(errorResponse['message'] ?? 'Failed to reject trip');
+      }
+    } catch (e) {
+      print('❌ Network error: ${e.toString()}');
+      throw Exception('Network error: ${e.toString()}');
+    }
+  }
+
   Future<TripDetailsResponse> getTripDetails(
     String token,
     String tripId,
@@ -2185,13 +2276,29 @@ class AuthService {
       
       // Add image file if provided
       if (startKmPic != null && await startKmPic.exists()) {
+        // Get file extension and determine MIME type
+        final fileName = startKmPic.path.split('/').last;
+        final extension = fileName.toLowerCase().split('.').last;
+        
+        MediaType contentType;
+        if (['jpg', 'jpeg'].contains(extension)) {
+          contentType = MediaType('image', 'jpeg');
+        } else if (extension == 'png') {
+          contentType = MediaType('image', 'png');
+        } else {
+          // Default to jpeg for any other case
+          print('⚠️ Unknown file extension: $extension, defaulting to image/jpeg');
+          contentType = MediaType('image', 'jpeg');
+        }
+        
         var multipartFile = await http.MultipartFile.fromPath(
           'start_km_pic',
           startKmPic.path,
-          filename: startKmPic.path.split('/').last,
+          filename: fileName,
+          contentType: contentType,
         );
         request.files.add(multipartFile);
-        print('🔵 Added start_km_pic file: ${startKmPic.path}');
+        print('🔵 Added start_km_pic file: $fileName, MIME type: ${contentType.toString()}');
       }
       
       print('🔵 Sending multipart request...');
@@ -2216,11 +2323,92 @@ class AuthService {
     }
   }
 
+  Future<Map<String, dynamic>> endTrip(
+    String token,
+    String tripId,
+    String endKm,
+    File? endKmPic,
+  ) async {
+    try {
+      final url = Uri.parse('$baseUrl/trip-manager/$tripId/end');
+      
+      print('🔵 API Call: POST (multipart) $url');
+      print('🔵 Authorization: Bearer ${token.substring(0, 20)}...');
+      print('🔵 Body: {end_km: $endKm}');
+      
+      // Create multipart request
+      var request = http.MultipartRequest('POST', url);
+      
+      // Add headers
+      request.headers['Authorization'] = 'Bearer $token';
+      
+      // Add fields
+      request.fields['end_km'] = endKm;
+      
+      // Add image file if provided
+      if (endKmPic != null && await endKmPic.exists()) {
+        // Get file extension and determine MIME type
+        final fileName = endKmPic.path.split('/').last;
+        final extension = fileName.toLowerCase().split('.').last;
+        
+        MediaType contentType;
+        if (['jpg', 'jpeg'].contains(extension)) {
+          contentType = MediaType('image', 'jpeg');
+        } else if (extension == 'png') {
+          contentType = MediaType('image', 'png');
+        } else {
+          // Default to jpeg for any other case
+          print('⚠️ Unknown file extension: $extension, defaulting to image/jpeg');
+          contentType = MediaType('image', 'jpeg');
+        }
+        
+        var multipartFile = await http.MultipartFile.fromPath(
+          'end_km_pic',
+          endKmPic.path,
+          filename: fileName,
+          contentType: contentType,
+        );
+        request.files.add(multipartFile);
+        print('🔵 Added end_km_pic file: $fileName, MIME type: ${contentType.toString()}');
+      }
+      
+      print('🔵 Sending multipart request...');
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+      
+      print('🔵 Response Status Code: ${response.statusCode}');
+      print('🔵 Response Body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final jsonResponse = jsonDecode(response.body);
+        print('✅ Trip ended successfully');
+        return jsonResponse as Map<String, dynamic>;
+      } else {
+        final errorResponse = jsonDecode(response.body);
+        print('❌ Failed to end trip: ${errorResponse['message'] ?? 'Unknown error'}');
+        throw Exception(errorResponse['message'] ?? 'Failed to end trip');
+      }
+    } catch (e) {
+      print('❌ Network error: ${e.toString()}');
+      throw Exception('Network error: ${e.toString()}');
+    }
+  }
+
   Future<Map<String, dynamic>> uploadOrderProof(
     String token,
     String orderId,
     String field,
     File proofFile,
+  ) async {
+    // Call the multiple files version with a single file
+    return uploadOrderProofMultiple(token, orderId, field, [proofFile]);
+  }
+
+  Future<Map<String, dynamic>> uploadOrderProofMultiple(
+    String token,
+    String orderId,
+    String field,
+    List<File> proofFiles,
   ) async {
     try {
       final url = Uri.parse('$baseUrl/order-manager/$orderId/upload-proof');
@@ -2228,6 +2416,7 @@ class AuthService {
       print('🔵 API Call: POST (multipart) $url');
       print('🔵 Authorization: Bearer ${token.substring(0, 20)}...');
       print('🔵 Field: $field');
+      print('🔵 Number of files: ${proofFiles.length}');
       
       // Create multipart request
       var request = http.MultipartRequest('POST', url);
@@ -2238,20 +2427,26 @@ class AuthService {
       // Add field
       request.fields['field'] = field;
       
-      // Add file
-      if (await proofFile.exists()) {
-        var multipartFile = await http.MultipartFile.fromPath(
-          'files',
-          proofFile.path,
-          filename: proofFile.path.split('/').last,
-        );
-        request.files.add(multipartFile);
-        print('🔵 Added proof file: ${proofFile.path}');
-      } else {
-        throw Exception('Proof file does not exist');
+      // Add all files
+      for (var proofFile in proofFiles) {
+        if (await proofFile.exists()) {
+          var multipartFile = await http.MultipartFile.fromPath(
+            'files',
+            proofFile.path,
+            filename: proofFile.path.split('/').last,
+          );
+          request.files.add(multipartFile);
+          print('🔵 Added proof file: ${proofFile.path}');
+        } else {
+          print('⚠️ File does not exist: ${proofFile.path}');
+        }
       }
       
-      print('🔵 Sending multipart request...');
+      if (request.files.isEmpty) {
+        throw Exception('No valid files to upload');
+      }
+      
+      print('🔵 Sending multipart request with ${request.files.length} file(s)...');
       final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);
       
@@ -2266,6 +2461,141 @@ class AuthService {
         final errorResponse = jsonDecode(response.body);
         print('❌ Failed to upload proof: ${errorResponse['message'] ?? 'Unknown error'}');
         throw Exception(errorResponse['message'] ?? 'Failed to upload proof');
+      }
+    } catch (e) {
+      print('❌ Network error: ${e.toString()}');
+      throw Exception('Network error: ${e.toString()}');
+    }
+  }
+
+  Future<Map<String, dynamic>> collectCod(
+    String token,
+    String orderId,
+    double codAmount,
+  ) async {
+    try {
+      final url = Uri.parse('$baseUrl/order-manager/$orderId/collect-cod');
+      
+      print('🔵 API Call: POST $url');
+      print('🔵 Authorization: Bearer ${token.substring(0, 20)}...');
+      print('🔵 COD Amount: $codAmount');
+      
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'cod_amount': codAmount,
+        }),
+      );
+
+      print('🔵 Response Status Code: ${response.statusCode}');
+      print('🔵 Response Body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final jsonResponse = jsonDecode(response.body);
+        print('✅ COD collected successfully');
+        return jsonResponse as Map<String, dynamic>;
+      } else {
+        final errorResponse = jsonDecode(response.body);
+        print('❌ Failed to collect COD: ${errorResponse['message'] ?? 'Unknown error'}');
+        throw Exception(errorResponse['message'] ?? 'Failed to collect COD');
+      }
+    } catch (e) {
+      print('❌ Network error: ${e.toString()}');
+      throw Exception('Network error: ${e.toString()}');
+    }
+  }
+
+  Future<Map<String, dynamic>> collectToPay(
+    String token,
+    String orderId,
+    double toPayAmount,
+    String paymentMethod,
+    File? paymentProof,
+  ) async {
+    try {
+      final url = Uri.parse('$baseUrl/order-manager/$orderId/collect-to-pay');
+      
+      print('🔵 API Call: POST (multipart) $url');
+      print('🔵 Authorization: Bearer ${token.substring(0, 20)}...');
+      print('🔵 To-Pay Amount: $toPayAmount');
+      print('🔵 Payment Method: $paymentMethod');
+      
+      // Create multipart request
+      var request = http.MultipartRequest('POST', url);
+      
+      // Add headers
+      request.headers['Authorization'] = 'Bearer $token';
+      
+      // Add fields
+      request.fields['to_pay_amount'] = toPayAmount.toString();
+      request.fields['payment_method'] = paymentMethod;
+      
+      // Add payment proof if provided
+      if (paymentProof != null && await paymentProof.exists()) {
+        var multipartFile = await http.MultipartFile.fromPath(
+          'payment_proof',
+          paymentProof.path,
+          filename: paymentProof.path.split('/').last,
+        );
+        request.files.add(multipartFile);
+        print('🔵 Added payment proof: ${paymentProof.path}');
+      }
+      
+      print('🔵 Sending multipart request...');
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+      
+      print('🔵 Response Status Code: ${response.statusCode}');
+      print('🔵 Response Body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final jsonResponse = jsonDecode(response.body);
+        print('✅ To-Pay collected successfully');
+        return jsonResponse as Map<String, dynamic>;
+      } else {
+        final errorResponse = jsonDecode(response.body);
+        print('❌ Failed to collect To-Pay: ${errorResponse['message'] ?? 'Unknown error'}');
+        throw Exception(errorResponse['message'] ?? 'Failed to collect To-Pay');
+      }
+    } catch (e) {
+      print('❌ Network error: ${e.toString()}');
+      throw Exception('Network error: ${e.toString()}');
+    }
+  }
+
+  Future<OrderTrackingResponse> getOrderTracking(
+    String orderId,
+    String token,
+  ) async {
+    try {
+      final url = Uri.parse('$baseUrl/order-manager/$orderId/tracking');
+
+      print('🔵 API Call: GET $url');
+      print('🔵 Authorization: Bearer ${token.substring(0, 20)}...');
+
+      final response = await http.get(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      print('🔵 Response Status Code: ${response.statusCode}');
+      print('🔵 Response Body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 304) {
+        final jsonResponse = jsonDecode(response.body);
+        print('✅ Order tracking retrieved successfully');
+        return OrderTrackingResponse.fromJson(jsonResponse);
+      } else {
+        final errorResponse = jsonDecode(response.body);
+        print('❌ Failed to get order tracking: ${errorResponse['message'] ?? 'Unknown error'}');
+        throw Exception(errorResponse['message'] ?? 'Failed to get order tracking');
       }
     } catch (e) {
       print('❌ Network error: ${e.toString()}');

@@ -5,6 +5,7 @@ import 'dart:io';
 import '../../auth/login.dart';
 import '../../services/user_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/tour_guide_service.dart';
 import '../../models/customer_details_model.dart';
 import '../../models/auth_models.dart';
 import 'customer_home.dart';
@@ -716,6 +717,62 @@ class _UserProfileState extends State<UserProfile> {
     );
   }
 
+  void _restartTour() async {
+    // Show confirmation dialog
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text(
+            'Restart App Tour?',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1E3A8A),
+            ),
+          ),
+          content: const Text(
+            'This will show you the guided tour again when you return to the home screen. Would you like to continue?',
+            style: TextStyle(fontSize: 16),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1E88E5),
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Restart Tour'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm == true) {
+      // Reset all tour states
+      await TourGuideService.resetAllTours();
+      
+      if (mounted) {
+        _showSnackBar('All tours reset! You will see guided tours on each page again.', isError: false);
+        
+        // Navigate back to home screen after a short delay
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (context) => const CustomerHome()),
+              (route) => false,
+            );
+          }
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1050,6 +1107,23 @@ class _UserProfileState extends State<UserProfile> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.purple,
                             foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 40,
+                        child: OutlinedButton.icon(
+                          onPressed: _restartTour,
+                          icon: const Icon(Icons.help_outline, size: 18),
+                          label: const Text('Restart App Tour'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF1E88E5),
+                            side: const BorderSide(color: Color(0xFF1E88E5)),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
                             ),

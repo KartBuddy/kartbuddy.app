@@ -131,6 +131,7 @@ class _BookPartloadState extends State<BookPartload> {
   List<String> _challanFilePaths = [];
   final ImagePicker _imagePicker = ImagePicker();
   String _walletBalance = '0.00';
+  String _paymentMode = 'wallet'; // 'wallet' or 'to_pay'
   
   // Dynamic price configuration
   DynamicPriceData? _dynamicPriceConfig;
@@ -406,6 +407,40 @@ class _BookPartloadState extends State<BookPartload> {
           });
         }
       });
+    }
+  }
+
+  Future<void> _loadConsigneeClosingTime(String placeId) async {
+    if (!mounted || placeId.isEmpty) return;
+
+    try {
+      final token = await UserService.getToken();
+      if (token == null) {
+        throw Exception('Authentication token not found.');
+      }
+
+      print('🔵 Fetching consignee closing time for place: $placeId');
+      final response = await _authService.getDcClosingTime(placeId, token);
+
+      if (mounted) {
+        final closingTime = response.data.maxOrderTime;
+        print('✅ Consignee closing time: $closingTime');
+        
+        // Format the time from "12:00:00" to "12:00" for the input field
+        if (closingTime.isNotEmpty) {
+          final timeParts = closingTime.split(':');
+          if (timeParts.length >= 2) {
+            final formattedTime = '${timeParts[0]}:${timeParts[1]}';
+            setState(() {
+              _consigneeClosingTimeController.text = formattedTime;
+            });
+            print('✅ Consignee closing time set to: $formattedTime');
+          }
+        }
+      }
+    } catch (e) {
+      print('❌ Error loading consignee closing time: $e');
+      // Don't show error dialog, just log it - user can still manually enter time
     }
   }
 
@@ -749,6 +784,13 @@ class _BookPartloadState extends State<BookPartload> {
           ),
         ],
       ),
+    );
+  }
+
+  void _showDimensionCalculator(DimensionData dimension) {
+    showDialog(
+      context: context,
+      builder: (context) => _DimensionCalculatorDialog(dimension: dimension),
     );
   }
 
@@ -1452,6 +1494,7 @@ class _BookPartloadState extends State<BookPartload> {
         print('   Express delivery surcharge percentage: ${response.data.expressDeliverySurchargePercentage}');
         print('   Challan return charges: ${response.data.chalaanReturnCharges}');
         print('   GST percentage: ${response.data.gstPercentage}');
+        print('   Minimum order value: ${response.data.minimumOrderValue}');
         
         // Recalculate price with new configuration
         _calculatePrice();
@@ -1529,6 +1572,12 @@ class _BookPartloadState extends State<BookPartload> {
 
     // Calculate transport charges (base amount)
       transportAmount = chargeableWt * _dynamicPriceConfig!.baseFarePerKg;
+    }
+
+    // Ensure transport charges are not less than minimum order value
+    if (transportAmount < _dynamicPriceConfig!.minimumOrderValue) {
+      transportAmount = _dynamicPriceConfig!.minimumOrderValue;
+      print('🔵 Transport charges (₹${chargeableWt * _dynamicPriceConfig!.baseFarePerKg}) is less than minimum order value. Setting to: ₹${_dynamicPriceConfig!.minimumOrderValue}');
     }
 
     // Update state with calculated values
@@ -1746,6 +1795,13 @@ class _BookPartloadState extends State<BookPartload> {
     final dimension = firstDimension.selectedDimension!;
 
     double transportAmount = totalTransportAmount;
+    
+    // Ensure transport charges are not less than minimum order value
+    final minimumOrderValue = double.tryParse(dimension.minimumOrderValue) ?? 0;
+    if (minimumOrderValue > 0 && transportAmount < minimumOrderValue) {
+      print('🔵 Fixed Price - Transport charges (₹${transportAmount}) is less than minimum order value. Setting to: ₹${minimumOrderValue}');
+      transportAmount = minimumOrderValue;
+    }
     
     // Fixed Price calculation flow (as per specification):
     // 1. Transport Charges (A)
@@ -2100,12 +2156,49 @@ class _BookPartloadState extends State<BookPartload> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Dimension ${index + 1}',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
+              Expanded(
+                child: Row(
+                  children: [
+                    Text(
+                      'Dimension ${index + 1}',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => _showDimensionCalculator(dimension),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E88E5).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: const Color(0xFF1E88E5).withOpacity(0.3), width: 1),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.calculate,
+                              size: 14,
+                              color: Color(0xFF1E88E5),
+                            ),
+                            SizedBox(width: 4),
+                            Text(
+                              'Quick Converter',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFF1E88E5),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               if (_dynamicDimensionList.length > 1)
@@ -3491,10 +3584,12 @@ class _BookPartloadState extends State<BookPartload> {
         totalCommodityValue: _collectCOD && codAmount > 0 
             ? codAmount.toStringAsFixed(2) 
             : '0.00',
+        paymentMode: _paymentMode,
       );
 
       print('🔵 Submitting order...');
       print('🔵 Order Request Details:');
+      print('   - Payment Mode: $_paymentMode ${_paymentMode == 'wallet' ? '(Wallet will be deducted)' : '(No wallet deduction - To-Pay)'}');
       print('   - Dimensions count: ${dimensionList.length}');
       print('   - Total Units: $totalUnitsForSubmit');
       print('   - Total Gross Weight: $totalGrossWeightForSubmit');
@@ -4238,6 +4333,152 @@ class _BookPartloadState extends State<BookPartload> {
         ),
         const SizedBox(height: 32),
 
+        // Payment Method Selection
+        Container(
+          padding: const EdgeInsets.all(20.0),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Payment Method',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1E3A8A),
+                ),
+              ),
+              SizedBox(height: Responsive.spacing(context, 20)),
+              // Prepaid (Wallet) Option
+              InkWell(
+                onTap: () {
+                  setState(() {
+                    _paymentMode = 'wallet';
+                  });
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: _paymentMode == 'wallet' ? Colors.blue[50] : Colors.grey[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _paymentMode == 'wallet' ? Colors.blue : Colors.grey[300]!,
+                      width: _paymentMode == 'wallet' ? 2 : 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Radio<String>(
+                        value: 'wallet',
+                        groupValue: _paymentMode,
+                        onChanged: (value) {
+                          setState(() {
+                            _paymentMode = value!;
+                          });
+                        },
+                        activeColor: const Color(0xFF1E3A8A),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Prepaid (Wallet)',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1E3A8A),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Amount will be deducted from your wallet balance immediately',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // To-Pay Option
+              InkWell(
+                onTap: () {
+                  setState(() {
+                    _paymentMode = 'to_pay';
+                  });
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: _paymentMode == 'to_pay' ? Colors.blue[50] : Colors.grey[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _paymentMode == 'to_pay' ? Colors.blue : Colors.grey[300]!,
+                      width: _paymentMode == 'to_pay' ? 2 : 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Radio<String>(
+                        value: 'to_pay',
+                        groupValue: _paymentMode,
+                        onChanged: (value) {
+                          setState(() {
+                            _paymentMode = value!;
+                          });
+                        },
+                        activeColor: const Color(0xFF1E3A8A),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'To-Pay',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1E3A8A),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Consignee will pay the driver upon delivery (Cash/UPI)',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 32),
+
         // Weight & Price Summary
         Container(
           padding: const EdgeInsets.all(20.0),
@@ -4864,6 +5105,152 @@ class _BookPartloadState extends State<BookPartload> {
                         ),
                       ),
               ),
+          ),
+        ),
+        const SizedBox(height: 32),
+
+        // Payment Method Selection
+        Container(
+          padding: const EdgeInsets.all(20.0),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Payment Method',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1E3A8A),
+                ),
+              ),
+              SizedBox(height: Responsive.spacing(context, 20)),
+              // Prepaid (Wallet) Option
+              InkWell(
+                onTap: () {
+                  setState(() {
+                    _paymentMode = 'wallet';
+                  });
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: _paymentMode == 'wallet' ? Colors.blue[50] : Colors.grey[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _paymentMode == 'wallet' ? Colors.blue : Colors.grey[300]!,
+                      width: _paymentMode == 'wallet' ? 2 : 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Radio<String>(
+                        value: 'wallet',
+                        groupValue: _paymentMode,
+                        onChanged: (value) {
+                          setState(() {
+                            _paymentMode = value!;
+                          });
+                        },
+                        activeColor: const Color(0xFF1E3A8A),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Prepaid (Wallet)',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1E3A8A),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Amount will be deducted from your wallet balance immediately',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // To-Pay Option
+              InkWell(
+                onTap: () {
+                  setState(() {
+                    _paymentMode = 'to_pay';
+                  });
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: _paymentMode == 'to_pay' ? Colors.blue[50] : Colors.grey[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _paymentMode == 'to_pay' ? Colors.blue : Colors.grey[300]!,
+                      width: _paymentMode == 'to_pay' ? 2 : 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Radio<String>(
+                        value: 'to_pay',
+                        groupValue: _paymentMode,
+                        onChanged: (value) {
+                          setState(() {
+                            _paymentMode = value!;
+                          });
+                        },
+                        activeColor: const Color(0xFF1E3A8A),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'To-Pay',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1E3A8A),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Consignee will pay the driver upon delivery (Cash/UPI)',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 32),
@@ -5968,6 +6355,10 @@ class _BookPartloadState extends State<BookPartload> {
                       _consigneeResults = [];
                     });
                     _consigneeFocusNode.unfocus();
+                    // Fetch consignee closing time when consignee is selected
+                    if (consignee.placeId.isNotEmpty) {
+                      _loadConsigneeClosingTime(consignee.placeId);
+                    }
                   },
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
@@ -6301,5 +6692,416 @@ class _BookPartloadState extends State<BookPartload> {
     );
   }
 
+}
+
+// Dimension Calculator Dialog
+class _DimensionCalculatorDialog extends StatefulWidget {
+  final DimensionData dimension;
+
+  const _DimensionCalculatorDialog({required this.dimension});
+
+  @override
+  State<_DimensionCalculatorDialog> createState() => _DimensionCalculatorDialogState();
+}
+
+class _DimensionCalculatorDialogState extends State<_DimensionCalculatorDialog> {
+  String _selectedTab = 'Inches';
+  
+  // Controllers for Inches tab
+  final TextEditingController _lengthInchesController = TextEditingController();
+  final TextEditingController _breadthInchesController = TextEditingController();
+  final TextEditingController _heightInchesController = TextEditingController();
+  
+  // Controllers for Feet & Inches tab
+  final TextEditingController _lengthFeetController = TextEditingController();
+  final TextEditingController _lengthInController = TextEditingController();
+  final TextEditingController _breadthFeetController = TextEditingController();
+  final TextEditingController _breadthInController = TextEditingController();
+  final TextEditingController _heightFeetController = TextEditingController();
+  final TextEditingController _heightInController = TextEditingController();
+
+  @override
+  void dispose() {
+    _lengthInchesController.dispose();
+    _breadthInchesController.dispose();
+    _heightInchesController.dispose();
+    _lengthFeetController.dispose();
+    _lengthInController.dispose();
+    _breadthFeetController.dispose();
+    _breadthInController.dispose();
+    _heightFeetController.dispose();
+    _heightInController.dispose();
+    super.dispose();
+  }
+
+  void _applyDimensions() {
+    double lengthCm = 0;
+    double breadthCm = 0;
+    double heightCm = 0;
+
+    if (_selectedTab == 'Inches') {
+      // Convert inches to cm (1 inch = 2.54 cm)
+      lengthCm = (double.tryParse(_lengthInchesController.text) ?? 0) * 2.54;
+      breadthCm = (double.tryParse(_breadthInchesController.text) ?? 0) * 2.54;
+      heightCm = (double.tryParse(_heightInchesController.text) ?? 0) * 2.54;
+    } else {
+      // Convert feet + inches to cm (1 foot = 30.48 cm, 1 inch = 2.54 cm)
+      final lengthFeet = double.tryParse(_lengthFeetController.text) ?? 0;
+      final lengthIn = double.tryParse(_lengthInController.text) ?? 0;
+      lengthCm = (lengthFeet * 30.48) + (lengthIn * 2.54);
+      
+      final breadthFeet = double.tryParse(_breadthFeetController.text) ?? 0;
+      final breadthIn = double.tryParse(_breadthInController.text) ?? 0;
+      breadthCm = (breadthFeet * 30.48) + (breadthIn * 2.54);
+      
+      final heightFeet = double.tryParse(_heightFeetController.text) ?? 0;
+      final heightIn = double.tryParse(_heightInController.text) ?? 0;
+      heightCm = (heightFeet * 30.48) + (heightIn * 2.54);
+    }
+
+    // Apply to dimension controllers with 2 decimal places
+    widget.dimension.lengthController.text = lengthCm.toStringAsFixed(2);
+    widget.dimension.breadthController.text = breadthCm.toStringAsFixed(2);
+    widget.dimension.heightController.text = heightCm.toStringAsFixed(2);
+
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Container(
+        width: MediaQuery.of(context).size.width * 0.85,
+        constraints: const BoxConstraints(maxWidth: 400),
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E88E5).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.calculate,
+                    color: Color(0xFF1E88E5),
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Text(
+                  'Dimension Calculator',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF212121),
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Color(0xFF757575)),
+                  onPressed: () => Navigator.of(context).pop(),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            
+            // Tabs
+            Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F5F5),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _selectedTab = 'Inches'),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: _selectedTab == 'Inches' ? Colors.white : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: _selectedTab == 'Inches' 
+                            ? [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.05),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ]
+                            : [],
+                        ),
+                        child: Text(
+                          'Inches',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: _selectedTab == 'Inches' ? FontWeight.w600 : FontWeight.w500,
+                            color: _selectedTab == 'Inches' ? const Color(0xFF1E88E5) : const Color(0xFF757575),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _selectedTab = 'Feet & Inches'),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: _selectedTab == 'Feet & Inches' ? Colors.white : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: _selectedTab == 'Feet & Inches' 
+                            ? [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.05),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ]
+                            : [],
+                        ),
+                        child: Text(
+                          'Feet & Inches',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: _selectedTab == 'Feet & Inches' ? FontWeight.w600 : FontWeight.w500,
+                            color: _selectedTab == 'Feet & Inches' ? const Color(0xFF1E88E5) : const Color(0xFF757575),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            
+            // Input fields based on selected tab
+            if (_selectedTab == 'Inches') ...[
+              _buildSingleInputRow('Length', _lengthInchesController),
+              const SizedBox(height: 16),
+              _buildSingleInputRow('Breadth', _breadthInchesController),
+              const SizedBox(height: 16),
+              _buildSingleInputRow('Height', _heightInchesController),
+            ] else ...[
+              _buildDualInputRow('Length', _lengthFeetController, _lengthInController),
+              const SizedBox(height: 16),
+              _buildDualInputRow('Breadth', _breadthFeetController, _breadthInController),
+              const SizedBox(height: 16),
+              _buildDualInputRow('Height', _heightFeetController, _heightInController),
+            ],
+            
+            const SizedBox(height: 24),
+            
+            // Buttons
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: const BorderSide(color: Color(0xFFE0E0E0)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF757575),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _applyDimensions,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1E88E5),
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      'Apply Dimensions',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSingleInputRow(String label, TextEditingController controller) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 80,
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF424242),
+            ),
+          ),
+        ),
+        Expanded(
+          child: TextField(
+            controller: controller,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF212121),
+            ),
+            decoration: InputDecoration(
+              hintText: 'Inches',
+              hintStyle: const TextStyle(
+                color: Color(0xFFBDBDBD),
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+              ),
+              filled: true,
+              fillColor: const Color(0xFFFAFAFA),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFF1E88E5), width: 2),
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDualInputRow(String label, TextEditingController ftController, TextEditingController inController) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 80,
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF424242),
+            ),
+          ),
+        ),
+        Expanded(
+          child: TextField(
+            controller: ftController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF212121),
+            ),
+            decoration: InputDecoration(
+              hintText: 'Ft',
+              hintStyle: const TextStyle(
+                color: Color(0xFFBDBDBD),
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+              ),
+              filled: true,
+              fillColor: const Color(0xFFFAFAFA),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFF1E88E5), width: 2),
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: TextField(
+            controller: inController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF212121),
+            ),
+            decoration: InputDecoration(
+              hintText: 'In',
+              hintStyle: const TextStyle(
+                color: Color(0xFFBDBDBD),
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+              ),
+              filled: true,
+              fillColor: const Color(0xFFFAFAFA),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: Color(0xFF1E88E5), width: 2),
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
+import 'package:tutorial_coach_mark/tutorial_coach_mark.dart';
 import 'customer_home.dart';
 import 'place_order.dart';
 import 'my_orders.dart';
@@ -12,6 +13,7 @@ import 'manual_recharge.dart';
 import '../../auth/login.dart';
 import '../../services/user_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/tour_guide_service.dart';
 import '../../models/wallet_transaction_model.dart';
 
 class CustomerWallet extends StatefulWidget {
@@ -36,6 +38,14 @@ class _CustomerWalletState extends State<CustomerWallet> {
   String? _currentOrderId;
   int? _currentAmount;
 
+  // Tour guide keys
+  final GlobalKey _balanceKey = GlobalKey();
+  final GlobalKey _rechargeKey = GlobalKey();
+  final GlobalKey _historyKey = GlobalKey();
+  final GlobalKey _transactionsKey = GlobalKey();
+  
+  TutorialCoachMark? _tutorialCoachMark;
+
   @override
   void initState() {
     super.initState();
@@ -45,7 +55,223 @@ class _CustomerWalletState extends State<CustomerWallet> {
     _razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, _handleExternalWallet);
     _loadUserData();
     _loadWalletHistory();
+    _checkAndShowTour();
   }
+
+  Future<void> _checkAndShowTour() async {
+    await Future.delayed(const Duration(milliseconds: 800));
+    
+    final shouldShow = await TourGuideService.shouldShowPageTour(TourGuideService.walletTour);
+    if (shouldShow && mounted) {
+      _showTutorial();
+    }
+  }
+
+  void _showTutorial() {
+    final targets = [
+      TargetFocus(
+        identify: "balance",
+        keyTarget: _balanceKey,
+        contents: [
+          TargetContent(
+            align: ContentAlign.bottom,
+            builder: (context, controller) {
+              return _buildTourContent(
+                context,
+                controller,
+                "Wallet Balance",
+                "This shows your current wallet balance. Use your wallet to pay for orders quickly!",
+                isFirst: true,
+              );
+            },
+          ),
+        ],
+      ),
+      TargetFocus(
+        identify: "recharge",
+        keyTarget: _rechargeKey,
+        contents: [
+          TargetContent(
+            align: ContentAlign.top,
+            builder: (context, controller) {
+              return _buildTourContent(
+                context,
+                controller,
+                "Add Money",
+                "Enter an amount and tap 'Add Money' to recharge your wallet using Razorpay. You can also use gift codes!",
+              );
+            },
+          ),
+        ],
+      ),
+      TargetFocus(
+        identify: "history",
+        keyTarget: _historyKey,
+        contents: [
+          TargetContent(
+            align: ContentAlign.bottom,
+            builder: (context, controller) {
+              return _buildTourContent(
+                context,
+                controller,
+                "Full History",
+                "Click here to view your complete wallet transaction history.",
+              );
+            },
+          ),
+        ],
+      ),
+      TargetFocus(
+        identify: "transactions",
+        keyTarget: _transactionsKey,
+        contents: [
+          TargetContent(
+            align: ContentAlign.top,
+            builder: (context, controller) {
+              return _buildTourContent(
+                context,
+                controller,
+                "Recent Transactions",
+                "Here you can see your latest wallet transactions including recharges and payments.",
+                isLast: true,
+              );
+            },
+          ),
+        ],
+      ),
+    ];
+
+    _tutorialCoachMark = TutorialCoachMark(
+      targets: targets,
+      colorShadow: Colors.black,
+      paddingFocus: 10,
+      opacityShadow: 0.8,
+      hideSkip: true, // Hide the external skip button
+      onFinish: () {
+        TourGuideService.completePageTour(TourGuideService.walletTour);
+      },
+      onSkip: () {
+        TourGuideService.completePageTour(TourGuideService.walletTour);
+        return true;
+      },
+    );
+    _tutorialCoachMark?.show(context: context);
+  }
+
+  Widget _buildTourContent(
+    BuildContext context,
+    TutorialCoachMarkController controller,
+    String title,
+    String description, {
+    bool isFirst = false,
+    bool isLast = false,
+  }) {
+    return SafeArea(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width - 40,
+        ),
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E3A8A),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.amber,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.lightbulb,
+                    color: Color(0xFF1E3A8A),
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              description,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                if (!isLast)
+                  TextButton(
+                    onPressed: () => controller.skip(),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    ),
+                    child: const Text(
+                      "Skip Tour",
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                if (!isLast) const Spacer(),
+                ElevatedButton(
+                  onPressed: () => isLast ? controller.next() : controller.next(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.amber,
+                    foregroundColor: const Color(0xFF1E3A8A),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: Text(
+                    isLast ? "Got it!" : "Next",
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+
 
   Future<void> _loadUserData() async {
     final displayName = await UserService.getUserDisplayName();
@@ -237,6 +463,7 @@ class _CustomerWalletState extends State<CustomerWallet> {
 
   @override
   void dispose() {
+    _tutorialCoachMark?.finish();
     _razorpay.clear(); // Removes all listeners
     _amountController.dispose();
     super.dispose();
@@ -540,22 +767,30 @@ class _CustomerWalletState extends State<CustomerWallet> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Wallet Balance
-                  const Text(
-                    'Wallet Balance',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '₹$_walletBalance',
-                    style: const TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green,
-                      letterSpacing: 0.5,
+                  Container(
+                    key: _balanceKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Wallet Balance',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '₹$_walletBalance',
+                          style: const TextStyle(
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 32),
@@ -613,6 +848,7 @@ class _CustomerWalletState extends State<CustomerWallet> {
 
                   // Recharge Buttons
                   Row(
+                    key: _rechargeKey,
                     children: [
                       Expanded(
                         child: Container(
@@ -744,15 +980,19 @@ class _CustomerWalletState extends State<CustomerWallet> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        'Recent Transactions',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.red,
+                      Container(
+                        key: _transactionsKey,
+                        child: const Text(
+                          'Recent Transactions',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red,
+                          ),
                         ),
                       ),
                       TextButton(
+                        key: _historyKey,
                         onPressed: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(builder: (context) => const WalletHistory()),

@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'signup.dart';
+import 'driver_signup.dart';
 import '../presentation/screens/customer_home.dart';
 import '../presentation/screens/driver_home.dart';
 import '../services/auth_service.dart';
 import '../services/user_service.dart';
 import '../models/auth_models.dart';
-import '../services/auth_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -602,11 +602,20 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                           WidgetSpan(
                             child: GestureDetector(
                               onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (context) => const SignupPage(),
-                                  ),
-                                );
+                                // Navigate to appropriate signup page based on selected role
+                                if (_selectedRole == 'Driver') {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (context) => const DriverSignupPage(),
+                                    ),
+                                  );
+                                } else {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (context) => const SignupPage(),
+                                    ),
+                                  );
+                                }
                               },
                               child: Text(
                                 'Sign up',

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../models/orders_model.dart';
+import '../../models/order_tracking_model.dart';
 import '../../services/auth_service.dart';
 import '../../services/user_service.dart';
 import '../widgets/customer_sidebar.dart';
@@ -14,17 +14,17 @@ class TrackingStatus extends StatefulWidget {
 }
 
 class _TrackingStatusState extends State<TrackingStatus> {
-  Order? _order;
+  OrderTrackingData? _trackingData;
   bool _isLoading = true;
   final AuthService _authService = AuthService();
 
   @override
   void initState() {
     super.initState();
-    _loadOrder();
+    _loadTracking();
   }
 
-  Future<void> _loadOrder() async {
+  Future<void> _loadTracking() async {
     if (!mounted) return;
     setState(() {
       _isLoading = true;
@@ -32,29 +32,22 @@ class _TrackingStatusState extends State<TrackingStatus> {
 
     try {
       final token = await UserService.getToken();
-      final customer = await UserService.getCustomer();
       
-      if (token == null || customer == null) {
-        throw Exception('Authentication token or customer ID not found.');
+      if (token == null) {
+        throw Exception('Authentication token not found.');
       }
 
-      print('🔵 Fetching orders for tracking: ${customer.id}');
-      final response = await _authService.getCustomerOrders(customer.id, token);
-
-      // Find the order by order ID
-      final foundOrder = response.data.firstWhere(
-        (order) => order.orderId.toUpperCase() == widget.orderId.toUpperCase(),
-        orElse: () => throw Exception('Order not found'),
-      );
+      print('🔵 Fetching tracking for order: ${widget.orderId}');
+      final response = await _authService.getOrderTracking(widget.orderId, token);
 
       if (mounted) {
         setState(() {
-          _order = foundOrder;
+          _trackingData = response.data;
           _isLoading = false;
         });
       }
     } catch (e) {
-      print('❌ Error loading order: $e');
+      print('❌ Error loading tracking: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -64,46 +57,35 @@ class _TrackingStatusState extends State<TrackingStatus> {
     }
   }
 
-  int _getCurrentStepIndex(String status) {
-    final statusLower = status.toLowerCase();
-    
-    if (statusLower == 'delivered') {
-      return 6; // All steps completed
-    } else if (statusLower == 'in_transit' || statusLower == 'in transit') {
-      return 5; // In Transit
-    } else if (statusLower == 'picked' || statusLower == 'order_picked') {
-      return 4; // Order Picked
-    } else if (statusLower == 'out_for_pickup' || statusLower == 'out for pickup') {
-      return 3; // Out for Pickup
-    } else if (statusLower == 'driver_assigned' || statusLower == 'driver assigned') {
-      return 2; // Driver Assigned
-    } else if (statusLower == 'accepted' || statusLower == 'order_accepted') {
-      return 1; // Order Accepted
-    } else if (statusLower == 'cancelled' || statusLower == 'canceled') {
-      // For cancelled orders, both Order Generated and Order Accepted are completed
-      return 1; // Order Accepted (both steps 0 and 1 are completed)
-    } else {
-      // For pending or any other status, at least Order Generated is completed
-      // If order exists, it must have been generated, so return 0 (Order Generated completed)
-      return 0; // Order Generated (completed)
+  String _getOrderStatus() {
+    if (_trackingData == null || _trackingData!.tracking.isEmpty) {
+      return 'pending';
     }
-  }
-
-  List<String> _getProgressSteps() {
-    return [
-      'Order Generated',
-      'Order Accepted',
-      'Driver Assigned',
-      'Out for Pickup',
-      'Order Picked',
-      'In Transit',
-      'Delivered',
-    ];
-  }
-
-  String _formatStatus(String status) {
-    if (status.isEmpty) return 'N/A';
-    return status[0].toUpperCase() + status.substring(1).replaceAll('_', ' ');
+    
+    // Find the last completed step
+    final completedSteps = _trackingData!.tracking.where((step) => step.isCompleted).toList();
+    if (completedSteps.isEmpty) {
+      return 'pending';
+    }
+    
+    final lastStep = completedSteps.last;
+    final key = lastStep.key.toLowerCase();
+    
+    if (key == 'order_delivered') {
+      return 'delivered';
+    } else if (key == 'out_for_delivery') {
+      return 'in_transit';
+    } else if (key == 'order_picked') {
+      return 'picked';
+    } else if (key == 'out_for_pickup') {
+      return 'out_for_pickup';
+    } else if (key == 'driver_assigned') {
+      return 'driver_assigned';
+    } else if (key == 'order_accepted') {
+      return 'accepted';
+    } else {
+      return 'pending';
+    }
   }
 
   void _showErrorDialog(String message) {
@@ -162,14 +144,14 @@ class _TrackingStatusState extends State<TrackingStatus> {
                 valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1E3A8A)),
               ),
             )
-          : _order == null
+          : _trackingData == null
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       const Icon(Icons.error_outline, size: 64, color: Colors.red),
                       const SizedBox(height: 16),
-                      const Text('Order not found'),
+                      const Text('Order tracking not found'),
                       const SizedBox(height: 16),
                       ElevatedButton(
                         onPressed: () => Navigator.of(context).pop(),
@@ -228,7 +210,7 @@ class _TrackingStatusState extends State<TrackingStatus> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
-                                'Order ID: ${_order!.orderId}',
+                                'Order ID: ${_trackingData!.orderId}',
                                 style: const TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w600,
@@ -251,17 +233,15 @@ class _TrackingStatusState extends State<TrackingStatus> {
                                       vertical: 6,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: _order!.orderStatus.toLowerCase() == 'delivered'
+                                      color: _getOrderStatus().toLowerCase() == 'delivered'
                                           ? Colors.green
-                                          : _order!.orderStatus.toLowerCase() == 'pending'
+                                          : _getOrderStatus().toLowerCase() == 'pending'
                                               ? Colors.orange
-                                              : _order!.orderStatus.toLowerCase() == 'cancelled' || _order!.orderStatus.toLowerCase() == 'canceled'
-                                                  ? Colors.grey
-                                                  : Colors.blue,
+                                              : Colors.blue,
                                       borderRadius: BorderRadius.circular(20),
                                     ),
                                     child: Text(
-                                      _formatStatus(_order!.orderStatus),
+                                      _getOrderStatus().toUpperCase().replaceAll('_', ' '),
                                       style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 14,
@@ -297,92 +277,30 @@ class _TrackingStatusState extends State<TrackingStatus> {
   }
 
   List<Widget> _buildProgressSteps() {
-    final steps = _getProgressSteps();
-    final currentStepIndex = _getCurrentStepIndex(_order!.orderStatus);
-    final statusLower = _order!.orderStatus.toLowerCase();
-    final isCancelled = statusLower == 'cancelled' || statusLower == 'canceled';
-    final List<Widget> widgets = [];
-
-    // For cancelled orders, show only Order Generated with red X icon
-    if (isCancelled) {
-      widgets.add(
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Step Icon with Red X
-            Column(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.red,
-                    border: Border.all(
-                      color: Colors.red,
-                      width: 2,
-                    ),
-                  ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.close,
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                  ),
-                ),
-                // Red Vertical Line extending down
-                Container(
-                  width: 2,
-                  height: 60,
-                  color: Colors.red,
-                  margin: const EdgeInsets.symmetric(vertical: 4),
-                ),
-              ],
-            ),
-            const SizedBox(width: 16),
-            // Step Text
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    steps[0], // Order Generated
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.normal,
-                      color: Colors.black87,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Order cancelled',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.normal,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                  const SizedBox(height: 60),
-                ],
-              ),
-            ),
-          ],
+    if (_trackingData == null || _trackingData!.tracking.isEmpty) {
+      return [
+        const Center(
+          child: Padding(
+            padding: EdgeInsets.all(20.0),
+            child: Text('No tracking information available'),
+          ),
         ),
-      );
-      return widgets;
+      ];
     }
 
-    // For non-cancelled orders, show normal progress
-    for (int i = 0; i < steps.length; i++) {
-      final isCompleted = i <= currentStepIndex;
-      final isCurrent = i == currentStepIndex;
+    final List<Widget> widgets = [];
+    final trackingSteps = _trackingData!.tracking;
+
+    for (int i = 0; i < trackingSteps.length; i++) {
+      final step = trackingSteps[i];
+      final isCompleted = step.isCompleted;
+      final isLast = i == trackingSteps.length - 1;
 
       widgets.add(
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Step Icon/Number
+            // Step Icon
             Column(
               children: [
                 Container(
@@ -414,34 +332,42 @@ class _TrackingStatusState extends State<TrackingStatus> {
                   ),
                 ),
                 // Vertical Line
-                if (i < steps.length - 1)
+                if (!isLast)
                   Container(
                     width: 2,
-                    height: 60,
+                    height: step.meta?.text != null ? 80 : 60,
                     color: isCompleted ? Colors.green : Colors.grey[300],
                     margin: const EdgeInsets.symmetric(vertical: 4),
                   ),
               ],
             ),
             const SizedBox(width: 16),
-            // Step Text
+            // Step Text and Meta
             Expanded(
-              child: Padding(
-                padding: EdgeInsets.only(top: i < steps.length - 1 ? 0 : 0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    step.label,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: isCompleted ? FontWeight.w600 : FontWeight.normal,
+                      color: isCompleted ? Colors.green : Colors.grey[700],
+                    ),
+                  ),
+                  if (step.meta?.text != null) ...[
+                    const SizedBox(height: 4),
                     Text(
-                      steps[i],
+                      step.meta!.text!,
                       style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                        color: isCompleted ? Colors.green : Colors.grey[700],
+                        fontSize: 14,
+                        fontWeight: FontWeight.normal,
+                        color: Colors.grey[600],
                       ),
                     ),
-                    if (i < steps.length - 1) const SizedBox(height: 60),
                   ],
-                ),
+                  if (!isLast) SizedBox(height: step.meta?.text != null ? 40 : 60),
+                ],
               ),
             ),
           ],

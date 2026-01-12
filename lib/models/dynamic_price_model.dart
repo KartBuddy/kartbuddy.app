@@ -27,6 +27,7 @@ class DynamicPriceData {
   final double chalaanReturnCharges;
   final double expressDeliverySurchargePercentage;
   final double gstPercentage;
+  final double minimumOrderValue;
   final String status;
   final String statusRemark;
   final String createdDateTime;
@@ -40,6 +41,7 @@ class DynamicPriceData {
     required this.chalaanReturnCharges,
     required this.expressDeliverySurchargePercentage,
     required this.gstPercentage,
+    required this.minimumOrderValue,
     required this.status,
     required this.statusRemark,
     required this.createdDateTime,
@@ -65,6 +67,9 @@ class DynamicPriceData {
       gstPercentage: (json['gst_percentage'] != null)
           ? double.tryParse(json['gst_percentage'].toString()) ?? 18.0
           : 18.0,
+      minimumOrderValue: (json['minimum_order_value'] != null)
+          ? double.tryParse(json['minimum_order_value'].toString()) ?? 0.0
+          : 0.0,
       status: json['status'] ?? '',
       statusRemark: json['status_remark'] ?? '',
       createdDateTime: json['created_date_time'] ?? '',

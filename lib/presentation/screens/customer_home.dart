@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:tutorial_coach_mark/tutorial_coach_mark.dart';
 import '../widgets/customer_dashboard.dart';
 import 'customer_wallet.dart';
 import 'place_order.dart';
@@ -9,6 +10,7 @@ import 'support.dart';
 import 'user_profile.dart';
 import '../../auth/login.dart';
 import '../../services/user_service.dart';
+import '../../services/tour_guide_service.dart';
 import '../../utils/responsive.dart';
 
 class CustomerHome extends StatefulWidget {
@@ -25,10 +27,266 @@ class _CustomerHomeState extends State<CustomerHome> {
   String _userFullName = 'User';
   String _userEmail = '';
 
+  // Tour guide keys
+  final GlobalKey _menuKey = GlobalKey();
+  final GlobalKey _logoKey = GlobalKey();
+  final GlobalKey _profileKey = GlobalKey();
+  final GlobalKey _dashboardKey = GlobalKey();
+  final GlobalKey _walletKey = GlobalKey();
+  final GlobalKey _addressKey = GlobalKey();
+  final GlobalKey _ordersKey = GlobalKey();
+  
+  TutorialCoachMark? _tutorialCoachMark;
+  List<TargetFocus> _targets = [];
+
   @override
   void initState() {
     super.initState();
     _loadUserData();
+    _checkAndShowTour();
+  }
+
+  Future<void> _checkAndShowTour() async {
+    // Wait for the frame to render
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    final shouldShow = await TourGuideService.shouldShowTour();
+    if (shouldShow && mounted) {
+      _createTutorial();
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) {
+          _showTutorial();
+        }
+      });
+    }
+  }
+
+  void _createTutorial() {
+    _targets = [
+      TargetFocus(
+        identify: "menu",
+        keyTarget: _menuKey,
+        alignSkip: Alignment.topRight,
+        contents: [
+          TargetContent(
+            align: ContentAlign.bottom,
+            builder: (context, controller) {
+              return _buildTourContent(
+                "Navigation Menu",
+                "Open this menu to access all features like Place Order, Track Order, Place Manager, and Support.",
+                controller,
+              );
+            },
+          ),
+        ],
+      ),
+      TargetFocus(
+        identify: "profile",
+        keyTarget: _profileKey,
+        alignSkip: Alignment.topLeft,
+        contents: [
+          TargetContent(
+            align: ContentAlign.bottom,
+            builder: (context, controller) {
+              return _buildTourContent(
+                "Your Profile",
+                "Tap here to view your profile, account details, and sign out.",
+                controller,
+              );
+            },
+          ),
+        ],
+      ),
+      TargetFocus(
+        identify: "wallet",
+        keyTarget: _walletKey,
+        alignSkip: Alignment.topRight,
+        contents: [
+          TargetContent(
+            align: ContentAlign.top,
+            builder: (context, controller) {
+              return _buildTourContent(
+                "Wallet",
+                "Check your wallet balance, add money, and view transaction history.",
+                controller,
+              );
+            },
+          ),
+        ],
+      ),
+      TargetFocus(
+        identify: "address",
+        keyTarget: _addressKey,
+        alignSkip: Alignment.topRight,
+        contents: [
+          TargetContent(
+            align: ContentAlign.top,
+            builder: (context, controller) {
+              return _buildTourContent(
+                "Address Manager",
+                "Manage your pickup and delivery addresses. Add, edit, or delete saved locations.",
+                controller,
+              );
+            },
+          ),
+        ],
+      ),
+      TargetFocus(
+        identify: "orders",
+        keyTarget: _ordersKey,
+        alignSkip: Alignment.topRight,
+        contents: [
+          TargetContent(
+            align: ContentAlign.top,
+            builder: (context, controller) {
+              return _buildTourContent(
+                "My Orders",
+                "View all your orders, track shipments, and check order history.",
+                controller,
+                isLast: true,
+              );
+            },
+          ),
+        ],
+      ),
+    ];
+  }
+
+  void _showTutorial() {
+    _tutorialCoachMark = TutorialCoachMark(
+      targets: _targets,
+      colorShadow: Colors.black,
+      paddingFocus: 10,
+      opacityShadow: 0.8,
+      hideSkip: true, // Hide the external skip button
+      onFinish: () {
+        TourGuideService.completeTour();
+      },
+      onSkip: () {
+        TourGuideService.skipTour();
+        return true;
+      },
+    );
+    _tutorialCoachMark?.show(context: context);
+  }
+
+  Widget _buildTourContent(String title, String description, TutorialCoachMarkController controller, {bool isLast = false}) {
+    return SafeArea(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width - 40,
+        ),
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E3A8A),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.amber,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.lightbulb,
+                    color: Color(0xFF1E3A8A),
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              description,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: isLast ? MainAxisAlignment.end : MainAxisAlignment.spaceBetween,
+              children: [
+                if (!isLast)
+                  TextButton(
+                    onPressed: () {
+                      controller.skip();
+                      TourGuideService.skipTour();
+                    },
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    ),
+                    child: const Text(
+                      "Skip Tour",
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ElevatedButton(
+                  onPressed: () {
+                    if (isLast) {
+                      TourGuideService.completeTour();
+                    }
+                    controller.next();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.amber,
+                    foregroundColor: const Color(0xFF1E3A8A),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: Text(
+                    isLast ? "Got it!" : "Next",
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _tutorialCoachMark?.finish();
+    super.dispose();
   }
 
   Future<void> _loadUserData() async {
@@ -67,6 +325,7 @@ class _CustomerHomeState extends State<CustomerHome> {
         automaticallyImplyLeading: false,
         leading: Builder(
           builder: (context) => IconButton(
+            key: _menuKey,
             icon: const Icon(
               Icons.menu,
               color: Colors.white,
@@ -110,6 +369,7 @@ class _CustomerHomeState extends State<CustomerHome> {
                 ),
                 const SizedBox(width: 12),
                 PopupMenuButton<String>(
+                  key: _profileKey,
                   offset: const Offset(0, 50),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -227,6 +487,7 @@ class _CustomerHomeState extends State<CustomerHome> {
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _buildNavItem(
+                  key: _dashboardKey,
                   icon: Icons.dashboard,
                   label: 'Dashboard',
                   isActive: _currentIndex == 0,
@@ -237,6 +498,7 @@ class _CustomerHomeState extends State<CustomerHome> {
                   },
                 ),
                 _buildNavItem(
+                  key: _walletKey,
                   icon: Icons.account_balance_wallet,
                   label: 'Wallet',
                   isActive: _currentIndex == 1,
@@ -249,6 +511,7 @@ class _CustomerHomeState extends State<CustomerHome> {
                   },
                 ),
                 _buildNavItem(
+                  key: _addressKey,
                   icon: Icons.location_on,
                   label: 'Address',
                   isActive: _currentIndex == 2,
@@ -261,6 +524,7 @@ class _CustomerHomeState extends State<CustomerHome> {
                   },
                 ),
                 _buildNavItem(
+                  key: _ordersKey,
                   icon: Icons.refresh,
                   label: 'My Orders',
                   isActive: _currentIndex == 3,
@@ -444,12 +708,14 @@ class _CustomerHomeState extends State<CustomerHome> {
   }
 
   Widget _buildNavItem({
+    Key? key,
     required IconData icon,
     required String label,
     required bool isActive,
     required VoidCallback onTap,
   }) {
     return Expanded(
+      key: key,
       child: Material(
         color: Colors.transparent,
         child: InkWell(

@@ -33,6 +33,7 @@ class OrderSubmitRequest {
   final String gstAmount;
   final String finalPayable;
   final String totalCommodityValue;
+  final String paymentMode;
 
   OrderSubmitRequest({
     required this.customerId,
@@ -67,6 +68,7 @@ class OrderSubmitRequest {
     required this.gstAmount,
     required this.finalPayable,
     required this.totalCommodityValue,
+    required this.paymentMode,
   });
 
   Map<String, dynamic> toJson() {
@@ -103,6 +105,7 @@ class OrderSubmitRequest {
       'gst_amount': gstAmount,
       'final_payable': finalPayable,
       'total_commodity_value': totalCommodityValue,
+      'payment_mode': paymentMode,
     };
   }
 }
